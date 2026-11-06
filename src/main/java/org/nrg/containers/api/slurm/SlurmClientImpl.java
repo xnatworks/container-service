@@ -508,6 +508,7 @@ public class SlurmClientImpl implements SlurmClient {
                 .jobId(jobId)
                 .source(SlurmJobState.Source.CONTROLLER)
                 .nodes(textOrNull(job.path("nodes")))
+                .submitTime(epochSeconds(job.get("submit_time")))
                 .startTime(epochSeconds(job.get("start_time")))
                 .endTime(epochSeconds(job.get("end_time")));
         applyStates(builder, job.get("job_state"));
@@ -530,6 +531,7 @@ public class SlurmClientImpl implements SlurmClient {
                 .jobId(jobId)
                 .source(SlurmJobState.Source.ACCOUNTING)
                 .nodes("None assigned".equals(nodes) ? null : nodes)
+                .submitTime(epochSeconds(job.path("time").get("submission")))
                 .startTime(epochSeconds(job.path("time").get("start")))
                 .endTime(epochSeconds(job.path("time").get("end")))
                 .reason(reason(state.path("reason")));

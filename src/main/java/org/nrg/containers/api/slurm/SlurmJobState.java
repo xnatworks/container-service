@@ -59,7 +59,8 @@ public abstract class SlurmJobState {
     /** Nodes the job runs or ran on, in Slurm's compressed form, e.g. {@code node[01-04]}. */
     @Nullable public abstract String nodes();
 
-    /** Start and end times as epoch seconds. */
+    /** Submit, start and end times as epoch seconds. */
+    @Nullable public abstract Long submitTime();
     @Nullable public abstract Long startTime();
     @Nullable public abstract Long endTime();
 
@@ -114,6 +115,7 @@ public abstract class SlurmJobState {
         public abstract Builder exitCode(Integer exitCode);
         public abstract Builder signal(String signal);
         public abstract Builder nodes(String nodes);
+        public abstract Builder submitTime(Long submitTime);
         public abstract Builder startTime(Long startTime);
         public abstract Builder endTime(Long endTime);
         public abstract Builder source(Source source);
