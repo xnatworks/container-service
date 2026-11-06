@@ -27,6 +27,8 @@ import java.util.regex.Pattern;
  *     arguments replace its CMD, matching Docker. Arguments are split the same way as for Swarm and each one is
  *     quoted.</li>
  * </ul>
+ * Both run with {@code --no-eval}, so arguments and environment values reach the container exactly as given, as
+ * under Docker. That needs Apptainer 1.1 or later, or SingularityCE 3.10 or later.
  * The image is chosen on the compute node when the job starts: a SIF in {@link SlurmSettings#sifDirectory()} named by
  * {@link #sifFileName(String)} if present, otherwise {@code docker://} (unless registry pulls are disabled, in which
  * case the job exits with {@value #EXIT_IMAGE_UNAVAILABLE}). XNAT therefore never needs to see the SIF directory.
@@ -128,7 +130,9 @@ public final class SlurmJobBuilder {
         appendImageSelection(script, container.dockerImage(), settings);
 
         script.append(runtime).append(container.overrideEntrypointNonnull() ? " exec" : " run");
-        script.append(" --cleanenv --contain --writable-tmpfs --workdir \"$JOB_DIR/").append(SlurmJobPaths.WORK).append('"');
+        // --no-eval: without it the image's runscript passes the arguments, and env values, through eval, so $,
+        // quotes and backticks in them are expanded a second time. Needs Apptainer 1.1+ or SingularityCE 3.10+.
+        script.append(" --no-eval --cleanenv --contain --writable-tmpfs --workdir \"$JOB_DIR/").append(SlurmJobPaths.WORK).append('"');
         if (gpus) {
             script.append(" --nv");
         }
