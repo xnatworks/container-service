@@ -12,6 +12,9 @@ import javax.annotation.Nullable;
  */
 @AutoValue
 public abstract class SlurmJobPaths {
+    /** Subdirectory of the site build path that holds one job directory per container. */
+    public static final String DIRECTORY = "slurm";
+
     public static final String STDOUT = "stdout.log";
     public static final String STDERR = "stderr.log";
 
@@ -42,6 +45,16 @@ public abstract class SlurmJobPaths {
             return create(stripped, stripped);
         }
         return create(stripped, strip(clusterPrefix) + stripped.substring(from.length()));
+    }
+
+    /**
+     * The job directory for a container: {@code <build path>/slurm/<container database ID>}. It is derived rather
+     * than stored, so the launch, the status poller and log reads all find it from the container alone. The
+     * container row exists before its job is submitted, so the ID is always known.
+     */
+    public static SlurmJobPaths forContainer(final String buildPath, final long databaseId,
+                                             @Nullable final String xnatPrefix, @Nullable final String clusterPrefix) {
+        return translate(strip(buildPath) + "/" + DIRECTORY + "/" + databaseId, xnatPrefix, clusterPrefix);
     }
 
     public String xnatFile(final String name) {

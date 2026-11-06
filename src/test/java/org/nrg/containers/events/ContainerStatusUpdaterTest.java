@@ -58,6 +58,7 @@ public class ContainerStatusUpdaterTest {
     @Mock private KubernetesClientFactory kubernetesClientFactory;
     @Mock private JmsTemplate jmsTemplate;
     @Mock private UserI adminUser;
+    @Mock private SlurmJobPoller slurmJobPoller;
 
     private MockedStatic<XFTManager> mockedXftManager;
     private MockedStatic<XDATServlet> mockedXdatServlet;
@@ -102,7 +103,7 @@ public class ContainerStatusUpdaterTest {
         when(containerService.retrieveServiceForPoll(DATABASE_ID)).thenReturn(pollProjection);
 
         updater = new ContainerStatusUpdater(containerControlApi, containerService, dockerServerService,
-                eventService, xnatAppInfo, kubernetesClientFactory, jmsTemplate);
+                eventService, xnatAppInfo, kubernetesClientFactory, jmsTemplate, slurmJobPoller);
     }
 
     @After
@@ -142,6 +143,40 @@ public class ContainerStatusUpdaterTest {
         assertThat(event.service(), is(sameInstance(pollProjection)));
         assertThat(event.task().swarmNodeError(), is(true));
         verify(containerService, never()).get(DATABASE_ID);
+    }
+
+    @Test
+    public void slurmTicksDelegateToThePollerWithThePrimaryNodeCheck() throws Exception {
+        final DockerServer slurmServer = DockerServer.builder()
+                .name("Slurm server")
+                .host("http://slurmrestd:6820")
+                .backend(Backend.SLURM)
+                .build();
+        when(dockerServerService.getServer()).thenReturn(slurmServer);
+        final ArgumentCaptor<java.util.function.BooleanSupplier> stillPrimary = ArgumentCaptor.forClass(java.util.function.BooleanSupplier.class);
+        when(slurmJobPoller.poll(org.mockito.ArgumentMatchers.eq(slurmServer), stillPrimary.capture())).thenReturn(Collections.emptyList());
+
+        updater.run();
+
+        verify(slurmJobPoller).poll(org.mockito.ArgumentMatchers.eq(slurmServer), org.mockito.ArgumentMatchers.any());
+        when(xnatAppInfo.isPrimaryNode()).thenReturn(false);
+        assertThat("the poller must see the node stop being primary during its walk", stillPrimary.getValue().getAsBoolean(), is(false));
+    }
+
+    @Test
+    public void slurmPollFailureIsReportedNotThrown() throws Exception {
+        final DockerServer slurmServer = DockerServer.builder()
+                .name("Slurm server")
+                .host("http://slurmrestd:6820")
+                .backend(Backend.SLURM)
+                .build();
+        when(dockerServerService.getServer()).thenReturn(slurmServer);
+        when(slurmJobPoller.poll(org.mockito.ArgumentMatchers.eq(slurmServer), org.mockito.ArgumentMatchers.any()))
+                .thenThrow(new org.nrg.containers.exceptions.ContainerBackendException("unreachable"));
+
+        updater.run();
+
+        verify(slurmJobPoller).poll(org.mockito.ArgumentMatchers.eq(slurmServer), org.mockito.ArgumentMatchers.any());
     }
 
     private ServiceTaskEvent capturedEvent() {

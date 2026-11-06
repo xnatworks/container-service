@@ -59,6 +59,9 @@ import com.google.common.base.Strings;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.nrg.containers.events.model.DockerContainerEvent;
+import org.nrg.containers.api.slurm.SlurmClientFactory;
+import org.nrg.containers.api.slurm.SlurmClientFactoryImpl;
+import org.nrg.containers.api.slurm.SlurmPing;
 import org.nrg.containers.exceptions.ContainerBackendException;
 import org.nrg.containers.exceptions.ContainerException;
 import org.nrg.containers.exceptions.DockerServerException;
@@ -112,18 +115,27 @@ public class DockerControlApi implements ContainerControlApi {
     private final DockerServerService dockerServerService;
     private final DockerHubService dockerHubService;
     private final KubernetesClientFactory kubernetesClientFactory;
+    private final SlurmClientFactory slurmClientFactory;
 
     private static final Object CACHED_DOCKER_CLIENT_MUTEX = new Object();
     private static DockerClientCacheKey CACHED_DOCKER_CLIENT_KEY = null;
     private static volatile DockerClient CACHED_DOCKER_CLIENT = null;
 
-    @Autowired
     public DockerControlApi(final DockerServerService dockerServerService,
                             final DockerHubService dockerHubService,
                             final KubernetesClientFactory kubernetesClientFactory) {
+        this(dockerServerService, dockerHubService, kubernetesClientFactory, new SlurmClientFactoryImpl());
+    }
+
+    @Autowired
+    public DockerControlApi(final DockerServerService dockerServerService,
+                            final DockerHubService dockerHubService,
+                            final KubernetesClientFactory kubernetesClientFactory,
+                            final SlurmClientFactory slurmClientFactory) {
         this.dockerServerService = dockerServerService;
         this.dockerHubService = dockerHubService;
         this.kubernetesClientFactory = kubernetesClientFactory;
+        this.slurmClientFactory = slurmClientFactory;
     }
 
     @Nonnull
@@ -157,9 +169,28 @@ public class DockerControlApi implements ContainerControlApi {
                 } catch (NoContainerServerException e) {
                     throw (e instanceof NoDockerServerException) ? (NoDockerServerException) e : new NoDockerServerException(e);
                 }
+            case SLURM:
+                return pingSlurm(dockerServer);
             default:
                 throw new NoDockerServerException("Not implemented");
         }
+    }
+
+    private String pingSlurm(final DockerServer dockerServer) throws DockerServerException, NoDockerServerException {
+        if (dockerServer.slurm() == null) {
+            throw new NoDockerServerException("The Slurm server has no Slurm settings");
+        }
+        final SlurmPing ping;
+        try {
+            ping = slurmClientFactory.getClient(dockerServer.slurm()).ping();
+        } catch (ContainerBackendException e) {
+            log.debug("Failed to ping slurmrestd", e);
+            throw new DockerServerException(e.getMessage(), e);
+        }
+        if (!ping.ok()) {
+            throw new DockerServerException("slurmrestd answered, but no slurmctld responded: " + ping.controllersDown());
+        }
+        return "OK";
     }
 
     private String pingServer(final DockerServer dockerServer) throws DockerServerException, NoDockerServerException {

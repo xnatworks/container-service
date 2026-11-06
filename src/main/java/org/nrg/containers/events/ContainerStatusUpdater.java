@@ -8,6 +8,7 @@ import org.nrg.containers.api.KubernetesClientFactory;
 import org.nrg.containers.events.model.ContainerEvent;
 import org.nrg.containers.events.model.DockerContainerEvent;
 import org.nrg.containers.events.model.ServiceTaskEvent;
+import org.nrg.containers.exceptions.ContainerBackendException;
 import org.nrg.containers.exceptions.ContainerException;
 import org.nrg.containers.exceptions.DockerServerException;
 import org.nrg.containers.exceptions.InvalidDefinitionException;
@@ -48,6 +49,7 @@ public class ContainerStatusUpdater implements Runnable {
     private final XnatAppInfo xnatAppInfo;
     private final KubernetesClientFactory kubernetesClientFactory;
     private final JmsTemplate template;
+    private final SlurmJobPoller slurmJobPoller;
 
     private boolean haveLoggedDockerConnectFailure = false;
     private boolean haveLoggedNoServerInDb = false;
@@ -61,7 +63,8 @@ public class ContainerStatusUpdater implements Runnable {
                                   final NrgEventServiceI eventService,
                                   final XnatAppInfo xnatAppInfo,
                                   final KubernetesClientFactory kubernetesClientFactory,
-                                  final JmsTemplate template) {
+                                  final JmsTemplate template,
+                                  final SlurmJobPoller slurmJobPoller) {
         this.containerControlApi = containerControlApi;
         this.containerService = containerService;
         this.dockerServerService = dockerServerService;
@@ -69,6 +72,7 @@ public class ContainerStatusUpdater implements Runnable {
         this.xnatAppInfo = xnatAppInfo;
         this.kubernetesClientFactory = kubernetesClientFactory;
         this.template = template;
+        this.slurmJobPoller = slurmJobPoller;
     }
 
     @Override
@@ -167,6 +171,8 @@ public class ContainerStatusUpdater implements Runnable {
                 return checkForDockerSwarmServiceUpdatesAndThrowEvents(server);
             case DOCKER:
                 return checkForDockerContainerUpdatesAndThrowEvents(server);
+            case SLURM:
+                return checkForSlurmJobUpdatesAndThrowEvents(server);
             case KUBERNETES:
                 try {
                     // Make sure the informer is running. It will handle throwing events on its own.
@@ -278,6 +284,19 @@ public class ContainerStatusUpdater implements Runnable {
         }
 
         return report.finish();
+    }
+
+    @Nonnull
+    private UpdateReport checkForSlurmJobUpdatesAndThrowEvents(final DockerServer server) {
+        try {
+            final UpdateReport report = UpdateReport.create();
+            for (final SlurmJobPoller.Outcome outcome : slurmJobPoller.poll(server, xnatAppInfo::isPrimaryNode)) {
+                report.add(outcome.successful ? UpdateReportEntry.success(outcome.id) : UpdateReportEntry.failure(outcome.id, outcome.message));
+            }
+            return report.finish();
+        } catch (ContainerBackendException e) {
+            return UpdateReport.singleton(UpdateReportEntry.failure(null, e.getMessage()));
+        }
     }
 
     private static class UpdateReport {
