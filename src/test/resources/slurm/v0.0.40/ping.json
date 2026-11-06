@@ -1,0 +1,35 @@
+{
+  "pings": [
+    {
+      "hostname": "node01",
+      "pinged": "UP",
+      "latency": 247,
+      "mode": "primary"
+    }
+  ],
+  "meta": {
+    "plugin": {
+      "type": "openapi/slurmctld",
+      "name": "Slurm OpenAPI slurmctld",
+      "data_parser": "data_parser/v0.0.40",
+      "accounting_storage": "accounting_storage/slurmdbd"
+    },
+    "client": {
+      "source": "",
+      "user": "root",
+      "group": "root"
+    },
+    "command": [],
+    "slurm": {
+      "version": {
+        "major": "23",
+        "micro": "4",
+        "minor": "11"
+      },
+      "release": "23.11.4",
+      "cluster": "xnat"
+    }
+  },
+  "errors": [],
+  "warnings": []
+}

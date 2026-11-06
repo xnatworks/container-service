@@ -1,0 +1,46 @@
+{
+  "result": {
+    "job_id": 4,
+    "step_id": "batch",
+    "error_code": 2042,
+    "error": "Job is in held state, pending scheduler release",
+    "job_submit_user_msg": ""
+  },
+  "job_id": 4,
+  "step_id": "batch",
+  "job_submit_user_msg": "",
+  "meta": {
+    "plugin": {
+      "type": "openapi/slurmctld",
+      "name": "Slurm OpenAPI slurmctld",
+      "data_parser": "data_parser/v0.0.40",
+      "accounting_storage": "accounting_storage/slurmdbd"
+    },
+    "client": {
+      "source": "",
+      "user": "root",
+      "group": "root"
+    },
+    "command": [],
+    "slurm": {
+      "version": {
+        "major": "23",
+        "micro": "4",
+        "minor": "11"
+      },
+      "release": "23.11.4",
+      "cluster": "xnat"
+    }
+  },
+  "errors": [],
+  "warnings": [
+    {
+      "description": "Job submission resulted in non-zero return code: Job is in held state, pending scheduler release",
+      "source": "slurm_submit_batch_job()"
+    },
+    {
+      "description": "Job is in held state, pending scheduler release",
+      "source": "slurm_submit_batch_job()"
+    }
+  ]
+}
