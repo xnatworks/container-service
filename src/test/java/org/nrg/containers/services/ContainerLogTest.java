@@ -141,6 +141,38 @@ public class ContainerLogTest {
         }
     }
 
+    @RunWith(JUnit4.class)
+    public static class SlurmLogTest extends BaseTest {
+        /** Slurm logs are polled by byte offset, carried through the UI as the poll's timestamp string. */
+        @Test
+        public void liveSlurmLogsContinueFromTheOffsetInTheTimestamp() throws Exception {
+            final LogType logType = LogType.STDOUT;
+            final String containerId = RandomStringUtils.randomAlphanumeric(10);
+            final Container container = Container.builder()
+                    .commandId(1L).wrapperId(1L).userId("admin")
+                    .containerId(containerId)
+                    .backend(org.nrg.containers.model.server.docker.Backend.SLURM)
+                    .serviceId("1234")
+                    .dockerImage("busybox").commandLine("echo")
+                    .status("Running")
+                    .build();
+            when(containerEntityService.get(containerId)).thenReturn(ContainerEntity.fromPojo(container));
+            when(containerControlApi.getLogFrom(any(Container.class), eq(logType), eq(0L)))
+                    .thenReturn(org.nrg.containers.api.LogChunk.create("one\ntwo\n", 8L));
+            when(containerControlApi.getLogFrom(any(Container.class), eq(logType), eq(8L)))
+                    .thenReturn(org.nrg.containers.api.LogChunk.create("three\n", 14L));
+
+            final ContainerLogPollResponse first = containerService.getLog(containerId, logType, (String) null);
+            assertThat(first.getContent(), is("one\ntwo\n"));
+
+            final ContainerLogPollResponse second = containerService.getLog(containerId, logType, first.getTimestamp());
+            assertThat(second.getContent(), is("three\n"));
+
+            assertThat(ContainerServiceImpl.parseTimestamp(second.getTimestamp()).get().toEpochSecond(), is(14L));
+            assertThat(second.isFromFile(), is(false));
+        }
+    }
+
     @RunWith(Parameterized.class)
     public static class ParameterizedLogTest extends BaseTest {
         @Parameter public DateTimeFormatter formatter;
