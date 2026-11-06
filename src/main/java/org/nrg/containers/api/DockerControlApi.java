@@ -59,9 +59,8 @@ import com.google.common.base.Strings;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.nrg.containers.events.model.DockerContainerEvent;
-import org.nrg.containers.api.slurm.SlurmClientFactory;
+import org.nrg.containers.api.slurm.SlurmBackend;
 import org.nrg.containers.api.slurm.SlurmClientFactoryImpl;
-import org.nrg.containers.api.slurm.SlurmPing;
 import org.nrg.containers.exceptions.ContainerBackendException;
 import org.nrg.containers.exceptions.ContainerException;
 import org.nrg.containers.exceptions.DockerServerException;
@@ -115,7 +114,7 @@ public class DockerControlApi implements ContainerControlApi {
     private final DockerServerService dockerServerService;
     private final DockerHubService dockerHubService;
     private final KubernetesClientFactory kubernetesClientFactory;
-    private final SlurmClientFactory slurmClientFactory;
+    private final SlurmBackend slurmBackend;
 
     private static final Object CACHED_DOCKER_CLIENT_MUTEX = new Object();
     private static DockerClientCacheKey CACHED_DOCKER_CLIENT_KEY = null;
@@ -124,18 +123,18 @@ public class DockerControlApi implements ContainerControlApi {
     public DockerControlApi(final DockerServerService dockerServerService,
                             final DockerHubService dockerHubService,
                             final KubernetesClientFactory kubernetesClientFactory) {
-        this(dockerServerService, dockerHubService, kubernetesClientFactory, new SlurmClientFactoryImpl());
+        this(dockerServerService, dockerHubService, kubernetesClientFactory, new SlurmBackend(new SlurmClientFactoryImpl(), null));
     }
 
     @Autowired
     public DockerControlApi(final DockerServerService dockerServerService,
                             final DockerHubService dockerHubService,
                             final KubernetesClientFactory kubernetesClientFactory,
-                            final SlurmClientFactory slurmClientFactory) {
+                            final SlurmBackend slurmBackend) {
         this.dockerServerService = dockerServerService;
         this.dockerHubService = dockerHubService;
         this.kubernetesClientFactory = kubernetesClientFactory;
-        this.slurmClientFactory = slurmClientFactory;
+        this.slurmBackend = slurmBackend;
     }
 
     @Nonnull
@@ -177,20 +176,14 @@ public class DockerControlApi implements ContainerControlApi {
     }
 
     private String pingSlurm(final DockerServer dockerServer) throws DockerServerException, NoDockerServerException {
-        if (dockerServer.slurm() == null) {
-            throw new NoDockerServerException("The Slurm server has no Slurm settings");
-        }
-        final SlurmPing ping;
         try {
-            ping = slurmClientFactory.getClient(dockerServer.slurm()).ping();
+            return slurmBackend.ping(dockerServer);
+        } catch (NoContainerServerException e) {
+            throw new NoDockerServerException(e.getMessage(), e);
         } catch (ContainerBackendException e) {
             log.debug("Failed to ping slurmrestd", e);
             throw new DockerServerException(e.getMessage(), e);
         }
-        if (!ping.ok()) {
-            throw new DockerServerException("slurmrestd answered, but no slurmctld responded: " + ping.controllersDown());
-        }
-        return "OK";
     }
 
     private String pingServer(final DockerServer dockerServer) throws DockerServerException, NoDockerServerException {
@@ -283,6 +276,11 @@ public class DockerControlApi implements ContainerControlApi {
                         .response("Unknown")
                         .message("Cannot ping image host in Kubernetes mode.");
                 break;
+            case SLURM:
+                hubStatusBuilder.ping(false)
+                        .response("Unknown")
+                        .message("Cannot ping image host in Slurm mode: images are pulled on the compute nodes.");
+                break;
             default:
                 hubStatusBuilder.ping(false)
                         .response("Error")
@@ -337,7 +335,7 @@ public class DockerControlApi implements ContainerControlApi {
 
     @Nonnull
     private List<DockerImage> getAllImages(final DockerServer server) throws DockerServerException {
-        if (server.backend() == Backend.KUBERNETES) {
+        if (server.backend() == Backend.KUBERNETES || server.backend() == Backend.SLURM) {
             return new ArrayList<>();
         }
 
@@ -367,8 +365,9 @@ public class DockerControlApi implements ContainerControlApi {
     @Nonnull
     public DockerImage getImageById(final String imageId)
         throws NotFoundException, DockerServerException, NoDockerServerException {
-        if (getServer().backend() == Backend.KUBERNETES) {
-            throw new NoDockerServerException("Docker server images not available in Kubernetes mode.");
+        final Backend backend = getServer().backend();
+        if (backend == Backend.KUBERNETES || backend == Backend.SLURM) {
+            throw new NoDockerServerException("Docker server images not available in " + backend + " mode.");
         }
 
         return getImageById(imageId, getDockerClient());
@@ -396,6 +395,7 @@ public class DockerControlApi implements ContainerControlApi {
 
     @Override
     public void deleteImageById(final String id, final Boolean force) throws NoDockerServerException, DockerServerException {
+        requireDockerImages();
         final DockerClient client = getDockerClient();
         try {
             client.removeImageCmd(id).withForce(force).withNoPrune(false).exec();
@@ -426,6 +426,7 @@ public class DockerControlApi implements ContainerControlApi {
     public DockerImage pullImage(final String name, final @Nullable DockerHub hub, final @Nullable String username,
                                  final @Nullable String password, final @Nullable String token, final @Nullable String email)
             throws NoDockerServerException, DockerServerException, NotFoundException {
+        requireDockerImages();
         final DockerClient client = getDockerClient();
 
         _pullImage(client, name, authConfig(hub, username, password, token, email));  // We want to throw NotFoundException here if the image is not found on the hub
@@ -435,6 +436,14 @@ public class DockerControlApi implements ContainerControlApi {
             final String m = String.format("Image \"%s\" was not found", name);
             log.error(m);
             throw new DockerServerException(e);
+        }
+    }
+
+    /** Slurm has no Docker daemon: images are pulled on the compute nodes when a job starts, or prebuilt as SIFs. */
+    private void requireDockerImages() throws NoDockerServerException {
+        if (getServer().backend() == Backend.SLURM) {
+            throw new NoDockerServerException("Images are not managed by XNAT in Slurm mode: the compute nodes pull them "
+                    + "when a job starts, or use prebuilt SIF files.");
         }
     }
 
@@ -505,6 +514,11 @@ public class DockerControlApi implements ContainerControlApi {
             case KUBERNETES:
                 final String kubernetesJobId = getKubernetesClient().createJob(toCreate, NumReplicas.ZERO, server.containerUser(), server.gpuVendor(), server.kubernetesTolerations());
                 createdBuilder.serviceId(kubernetesJobId);
+                break;
+            case SLURM:
+                // The job ID doubles as the task ID, which the status poller and the UI show.
+                final String slurmJobId = slurmBackend.create(toCreate, server);
+                createdBuilder.serviceId(slurmJobId).taskId(slurmJobId);
                 break;
             default:
                 throw new NoContainerServerException("Not implemented");
@@ -807,6 +821,9 @@ public class DockerControlApi implements ContainerControlApi {
             case KUBERNETES:
                 getKubernetesClient().unsuspendJob(toStart.jobName());
                 break;
+            case SLURM:
+                slurmBackend.start(toStart, server);
+                break;
             default:
                 throw new NoContainerServerException("Not implemented");
         }
@@ -887,9 +904,22 @@ public class DockerControlApi implements ContainerControlApi {
             case KUBERNETES:
                 log.info("Getting logs for container {} (database ID: {}) in pod {} (server type {} on host {})", container.containerId(), container.databaseId(), container.podName(), server.backend(), server.host());
                 return getKubernetesClient().getLog(container.podName(), logType, withTimestamps, since);
+            case SLURM:
+                // Slurm logs are files without timestamps; live polling reads them by offset through getLogFrom.
+                return slurmBackend.getLog(container, logType, server);
             default:
                 throw new NoContainerServerException("Not implemented");
         }
+    }
+
+    @Override
+    public LogChunk getLogFrom(final Container container, final LogType logType, final long offset)
+            throws ContainerBackendException, NoContainerServerException {
+        final DockerServer server = getServer();
+        if (server.backend() != Backend.SLURM) {
+            return ContainerControlApi.super.getLogFrom(container, logType, offset);
+        }
+        return slurmBackend.getLogFrom(container, logType, offset, server);
     }
 
     private String getDockerContainerLog(final DockerServer server, final String containerId, final LogType logType, final Boolean withTimestamps, final OffsetDateTime since) throws DockerServerException {
@@ -1026,6 +1056,9 @@ public class DockerControlApi implements ContainerControlApi {
             case KUBERNETES:
                 getKubernetesClient().removeJob(container.jobName());
                 break;
+            case SLURM:
+                slurmBackend.kill(container, server);
+                break;
             default:
                 throw new NoContainerServerException("Not implemented");
         }
@@ -1067,6 +1100,9 @@ public class DockerControlApi implements ContainerControlApi {
                 break;
             case KUBERNETES:
                 getKubernetesClient().removeJob(container.jobName());
+                break;
+            case SLURM:
+                slurmBackend.remove(container, server);
                 break;
             default:
                 throw new NoContainerServerException("Not implemented");

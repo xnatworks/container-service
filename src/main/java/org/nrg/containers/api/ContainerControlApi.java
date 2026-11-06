@@ -45,6 +45,14 @@ public interface ContainerControlApi {
     String getLog(Container container, LogType logType) throws ContainerBackendException, NoContainerServerException;
     String getLog(Container container, LogType logType, Boolean withTimestamps, OffsetDateTime since) throws ContainerBackendException, NoContainerServerException;
 
+    /**
+     * Reads a log from a byte offset. Only backends whose logs are plain files support it; the others give their
+     * lines timestamps and are read with {@link #getLog(Container, LogType, Boolean, OffsetDateTime)}.
+     */
+    default LogChunk getLogFrom(Container container, LogType logType, long offset) throws ContainerBackendException, NoContainerServerException {
+        throw new NoContainerServerException("Reading logs from an offset is not supported by this backend");
+    }
+
     void kill(Container container) throws NoContainerServerException, ContainerBackendException, NotFoundException;
     void autoCleanup(Container container) throws NoContainerServerException, ContainerBackendException, NotFoundException;
     void remove(Container container) throws NoContainerServerException, ContainerBackendException, NotFoundException;
