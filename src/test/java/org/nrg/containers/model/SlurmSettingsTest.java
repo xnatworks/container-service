@@ -72,6 +72,23 @@ public class SlurmSettingsTest {
     }
 
     @Test
+    public void apiVersionMayBeBlankOrAtLeastTheMinimum() throws Exception {
+        slurmServer(valid().apiVersion(null).build()).validate();
+        slurmServer(valid().apiVersion("v0.0.40").build()).validate();
+        slurmServer(valid().apiVersion("v0.0.45").build()).validate();
+        // A version newer than the client knows is the admin's explicit choice, so it is allowed.
+        slurmServer(valid().apiVersion("v0.0.46").build()).validate();
+    }
+
+    @Test
+    public void apiVersionsCompareNumerically() {
+        assertThat(SlurmSettings.compareApiVersions("v0.0.40", "v0.0.40"), is(0));
+        assertThat(SlurmSettings.compareApiVersions("v0.0.9", "v0.0.40") < 0, is(true));
+        assertThat(SlurmSettings.compareApiVersions("v0.1.0", "v0.0.45") > 0, is(true));
+        assertThat(SlurmSettings.compareApiVersions("junk", "v0.0.40") < 0, is(true));
+    }
+
+    @Test
     public void slurmBackendDoesNotNeedADockerHost() throws Exception {
         // Docker and Swarm require a host; Slurm is reached through its REST URL instead.
         slurmServer(valid().build()).validate();
@@ -92,6 +109,7 @@ public class SlurmSettingsTest {
     public void badValuesAreReported() {
         assertInvalid(slurmServer(valid().restUrl("slurm.example.org").build()), "http or https URL");
         assertInvalid(slurmServer(valid().apiVersion("44").build()), "API version");
+        assertInvalid(slurmServer(valid().apiVersion("v0.0.39").build()), "API version");
         assertInvalid(slurmServer(valid().runtime("docker").build()), "runtime");
         assertInvalid(slurmServer(valid().timeLimit("forever").build()), "time limit");
     }
@@ -108,7 +126,7 @@ public class SlurmSettingsTest {
                 + "\"slurm\":{\"rest-url\":\"https://slurm:6820\",\"user\":\"xnat\",\"token\":\"t\",\"runtime\":\" Singularity \"}}",
                 DockerServer.class);
         final SlurmSettings slurm = server.slurm();
-        assertThat(slurm.apiVersion(), is(SlurmSettings.DEFAULT_API_VERSION));
+        assertThat("blank means detect automatically", slurm.apiVersion(), is(nullValue()));
         assertThat(slurm.runtime(), is("singularity"));
         assertThat(slurm.allowDockerPull(), is(true));
         assertThat(slurm.token(), is("t"));

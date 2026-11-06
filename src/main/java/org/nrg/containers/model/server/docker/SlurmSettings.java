@@ -35,18 +35,33 @@ import java.util.regex.Pattern;
 public abstract class SlurmSettings implements Serializable {
     private static final long serialVersionUID = 1L;
 
-    public static final String DEFAULT_API_VERSION = "v0.0.44";
+    /**
+     * Oldest slurmrestd API version XNAT supports. v0.0.40 (Slurm 23.11) introduced the job state arrays and
+     * {@code {set, infinite, number}} number wrappers the client relies on; v0.0.38 and v0.0.39 predate them.
+     */
+    public static final String MIN_API_VERSION = "v0.0.40";
+
+    /**
+     * API versions the client knows, oldest first. A blank {@link #apiVersion()} picks the newest of these that the
+     * server offers. Each Slurm release serves only a few versions (23.11 has v0.0.38-v0.0.40, 26.05 has
+     * v0.0.42-v0.0.45), so no single version covers the clusters XNAT runs against.
+     */
+    public static final List<String> SUPPORTED_API_VERSIONS = Collections.unmodifiableList(
+            Arrays.asList("v0.0.40", "v0.0.41", "v0.0.42", "v0.0.43", "v0.0.44", "v0.0.45"));
     public static final String RUNTIME_APPTAINER = "apptainer";
     public static final String RUNTIME_SINGULARITY = "singularity";
     public static final List<String> RUNTIMES = Collections.unmodifiableList(Arrays.asList(RUNTIME_APPTAINER, RUNTIME_SINGULARITY));
 
-    private static final Pattern API_VERSION_PATTERN = Pattern.compile("^v\\d+\\.\\d+\\.\\d+$");
+    private static final Pattern API_VERSION_PATTERN = Pattern.compile("^v(\\d+)\\.(\\d+)\\.(\\d+)$");
 
     /** Base URL of slurmrestd, e.g. {@code https://slurm.example.org:6820}. */
     @Nullable @JsonProperty("rest-url") public abstract String restUrl();
 
-    /** slurmrestd OpenAPI plugin version, e.g. {@code v0.0.44}. */
-    @JsonProperty("api-version") public abstract String apiVersion();
+    /**
+     * slurmrestd API version to use, e.g. {@code v0.0.40}. Blank means detect it: use the newest of
+     * {@link #SUPPORTED_API_VERSIONS} that the server offers.
+     */
+    @Nullable @JsonProperty("api-version") public abstract String apiVersion();
 
     /** Cluster account that submits every job (sent as {@code X-SLURM-USER-NAME}). */
     @Nullable @JsonProperty("user") public abstract String user();
@@ -100,7 +115,7 @@ public abstract class SlurmSettings implements Serializable {
                                        @JsonProperty("pull-cache-directory") final String pullCacheDirectory) {
         return builder()
                 .restUrl(StringUtils.trimToNull(restUrl))
-                .apiVersion(StringUtils.defaultIfBlank(StringUtils.trim(apiVersion), DEFAULT_API_VERSION))
+                .apiVersion(StringUtils.trimToNull(apiVersion))
                 .user(StringUtils.trimToNull(user))
                 .token(StringUtils.trimToNull(token))
                 .partition(StringUtils.trimToNull(partition))
@@ -128,7 +143,6 @@ public abstract class SlurmSettings implements Serializable {
 
     public static Builder builder() {
         return new AutoValue_SlurmSettings.Builder()
-                .apiVersion(DEFAULT_API_VERSION)
                 .runtime(RUNTIME_APPTAINER)
                 .allowDockerPull(true);
     }
@@ -154,8 +168,9 @@ public abstract class SlurmSettings implements Serializable {
         } else if (!isHttpUrl(restUrl())) {
             errors.add("Slurm REST URL must be an http or https URL");
         }
-        if (!API_VERSION_PATTERN.matcher(apiVersion()).matches()) {
-            errors.add("Slurm REST API version must look like " + DEFAULT_API_VERSION);
+        if (StringUtils.isNotBlank(apiVersion()) && compareApiVersions(apiVersion(), MIN_API_VERSION) < 0) {
+            errors.add("Slurm REST API version must be blank (detect automatically) or " + MIN_API_VERSION
+                    + " or newer, e.g. " + MIN_API_VERSION);
         }
         if (StringUtils.isBlank(user())) {
             errors.add("Slurm user cannot be empty for the Slurm backend");
@@ -177,6 +192,40 @@ public abstract class SlurmSettings implements Serializable {
             }
         }
         return errors;
+    }
+
+    /**
+     * Compares two API versions such as {@code v0.0.40}. A string that isn't a version sorts before every version,
+     * so it fails a minimum-version check.
+     */
+    public static int compareApiVersions(@Nullable final String a, @Nullable final String b) {
+        final int[] left = parseApiVersion(a);
+        final int[] right = parseApiVersion(b);
+        if (left == null || right == null) {
+            return left == null ? (right == null ? 0 : -1) : 1;
+        }
+        for (int i = 0; i < 3; i++) {
+            if (left[i] != right[i]) {
+                return Integer.compare(left[i], right[i]);
+            }
+        }
+        return 0;
+    }
+
+    @Nullable
+    private static int[] parseApiVersion(@Nullable final String version) {
+        if (version == null) {
+            return null;
+        }
+        final Matcher m = API_VERSION_PATTERN.matcher(version.trim());
+        if (!m.matches()) {
+            return null;
+        }
+        try {
+            return new int[]{Integer.parseInt(m.group(1)), Integer.parseInt(m.group(2)), Integer.parseInt(m.group(3))};
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     // minutes | minutes:seconds | hours:minutes:seconds | days-hours | days-hours:minutes | days-hours:minutes:seconds
