@@ -91,6 +91,62 @@ public class SlurmClientLiveTest {
         assertThat(state.toString(), state.exitCode(), is(SlurmJobBuilder.EXIT_IMAGE_UNAVAILABLE));
     }
 
+    /**
+     * Runs busybox with apptainer on the cluster (needs registry access from the node). Each container exits 7 only
+     * if every check inside it passes, because the job's output stays on the cluster.
+     */
+    @Test
+    public void containersRunWithApptainer() throws Exception {
+        final String stamp = String.valueOf(System.currentTimeMillis());
+        final SlurmSettings runSettings = settings.toBuilder().pullCacheDirectory("/tmp/xnat-live-test-cache").build();
+
+        // exec mode: environment, --pwd, writable /tmp, read-only bind
+        final String checks = "test \"$GREETING\" = 'hello world'"
+                + " && test \"$(pwd)\" = /tmp"
+                + " && touch /tmp/written"
+                + " && test -f /hostetc/hostname"
+                + " && ! touch /hostetc/xnat-should-fail 2>/dev/null"
+                + " && exit 7; exit 1";
+        final org.nrg.containers.model.container.auto.Container exec = liveContainer()
+                .overrideEntrypoint(true)
+                .commandLine(checks)
+                .workingDirectory("/tmp")
+                .environmentVariables(com.google.common.collect.ImmutableMap.of("GREETING", "hello world"))
+                .mounts(java.util.Collections.singletonList(org.nrg.containers.model.container.auto.Container.ContainerMount.builder()
+                        .databaseId(0L).name("etc").writable(false).xnatHostPath("/etc").containerHostPath("/etc")
+                        .containerPath("/hostetc").inputFiles(java.util.Collections.emptyList()).build()))
+                .build();
+        assertThat(runToEnd(exec, runSettings, "/tmp/xnat-live-exec-" + stamp).exitCode(), is(7));
+
+        // run mode: arguments reach the image's default command exactly, including $, quotes, backslashes and
+        // backticks that apptainer's runscript would otherwise evaluate
+        final org.nrg.containers.model.container.auto.Container run = liveContainer()
+                .commandLine("sh -c 'test \"$0|$1|$2\" = \"two words|\\$HOME \\\"q\\\"|a\\\\b\\`x\\`\" && exit 7; exit 1'"
+                        + " \"two words\" '$HOME \"q\"' 'a\\b`x`'")
+                .build();
+        assertThat(runToEnd(run, runSettings, "/tmp/xnat-live-run-" + stamp).exitCode(), is(7));
+    }
+
+    private static org.nrg.containers.model.container.auto.Container.Builder liveContainer() {
+        return org.nrg.containers.model.container.auto.Container.builder()
+                .databaseId(1L).commandId(1L).wrapperId(1L).userId("live-test")
+                .backend(org.nrg.containers.model.server.docker.Backend.SLURM)
+                .dockerImage("busybox:latest");
+    }
+
+    private SlurmJobState runToEnd(final org.nrg.containers.model.container.auto.Container container,
+                                   final SlurmSettings runSettings, final String jobDir) throws Exception {
+        final SlurmJobRequest request = SlurmJobBuilder.build(container, runSettings, SlurmJobPaths.create(jobDir, jobDir));
+        final long jobId = client.submit(request.toBuilder().hold(false).timeLimitMinutes(5).build());
+        SlurmJobState state = client.getJob(jobId).get();
+        for (int i = 0; i < 180 && !state.isTerminal(); i++) {
+            Thread.sleep(1000);
+            state = client.getJob(jobId).get();
+        }
+        assertThat(state.toString(), state.isTerminal(), is(true));
+        return state;
+    }
+
     private SlurmJobState waitWhilePending(final long jobId) throws Exception {
         SlurmJobState state = client.getJob(jobId).get();
         for (int i = 0; i < 30 && state.phase() == SlurmJobState.Phase.PENDING && !state.held(); i++) {

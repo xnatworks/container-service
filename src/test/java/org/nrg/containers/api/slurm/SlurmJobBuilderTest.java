@@ -74,7 +74,7 @@ public class SlurmJobBuilderTest {
                 settings().build(), PATHS).script();
 
         assertThat(script, startsWith("#!/bin/bash -l\n"));
-        assertThat(script, containsString("apptainer run --cleanenv --contain --writable-tmpfs --workdir \"$JOB_DIR/work\""));
+        assertThat(script, containsString("apptainer run --no-eval --cleanenv --contain --writable-tmpfs --workdir \"$JOB_DIR/work\""));
         assertThat(script, containsString("\"$IMAGE\" 'tool' '--name' 'two words' 'it'\\''s'\n"));
         assertThat(script, containsString("IMAGE='docker://xnat/dcm2niix:1.0.2'"));
         assertThat(script, containsString("finish $?"));
@@ -253,7 +253,7 @@ public class SlurmJobBuilderTest {
         assertThat(new String(Files.readAllBytes(jobDir.resolve(SlurmJobPaths.EXIT_CODE)), StandardCharsets.UTF_8).trim(), is("3"));
         assertThat(Files.isDirectory(jobDir.resolve(SlurmJobPaths.WORK)), is(true));
         final List<String> args = Files.readAllLines(argsFile, StandardCharsets.UTF_8);
-        assertThat(args, contains("run", "--cleanenv", "--contain", "--writable-tmpfs", "--workdir", jobDir.resolve("work").toString(),
+        assertThat(args, contains("run", "--no-eval", "--cleanenv", "--contain", "--writable-tmpfs", "--workdir", jobDir.resolve("work").toString(),
                 "--bind", "/data/in put:/input:ro", "docker://xnat/dcm2niix:1.0.2",
                 "tool", "--label", "two words", "single $HOME", "it's"));
     }
