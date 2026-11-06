@@ -1,9 +1,11 @@
 package org.nrg.containers.services.impl;
 
+import org.apache.commons.lang3.StringUtils;
 import org.nrg.containers.api.KubernetesClientFactory;
 import org.nrg.containers.exceptions.InvalidDefinitionException;
 import org.nrg.containers.model.server.docker.DockerServerBase.DockerServer;
 import org.nrg.containers.model.server.docker.DockerServerEntity;
+import org.nrg.containers.model.server.docker.SlurmSettings;
 import org.nrg.containers.services.DockerServerEntityService;
 import org.nrg.containers.services.DockerServerService;
 import org.nrg.framework.exceptions.NotFoundException;
@@ -70,9 +72,29 @@ public class DockerServerServiceImpl implements DockerServerService {
     }
 
     @Nonnull
-    public DockerServerEntity fromPojo(final DockerServer dockerServer) throws InvalidDefinitionException {
+    public DockerServerEntity fromPojo(final DockerServer submitted) throws InvalidDefinitionException {
+        final DockerServerEntity template = dockerServerEntityService.retrieve(submitted.id());
+        final DockerServer dockerServer = withStoredSlurmToken(submitted, template);
         dockerServer.validate();
-        final DockerServerEntity template = dockerServerEntityService.retrieve(dockerServer.id());
         return template == null ? DockerServerEntity.create(dockerServer) : template.update(dockerServer);
+    }
+
+    /**
+     * The API never returns the Slurm token, so a client saving the configuration it read back has none to send.
+     * In that case keep the stored token: from the server being updated, or from the enabled server when the save
+     * creates a new row (as the admin UI does). The token is only carried over when the REST URL is unchanged, so
+     * nobody can repoint the URL at a host they control and have XNAT send it the stored token.
+     */
+    private DockerServer withStoredSlurmToken(final DockerServer dockerServer, @Nullable final DockerServerEntity template) {
+        final SlurmSettings slurm = dockerServer.slurm();
+        if (slurm == null || slurm.tokenSet()) {
+            return dockerServer;
+        }
+        final DockerServerEntity stored = template != null ? template : dockerServerEntityService.getServer();
+        if (stored == null || StringUtils.isBlank(stored.getSlurmToken())
+                || !StringUtils.equals(stored.getSlurmRestUrl(), slurm.restUrl())) {
+            return dockerServer;
+        }
+        return dockerServer.toBuilder().slurm(slurm.withToken(stored.getSlurmToken())).build();
     }
 }

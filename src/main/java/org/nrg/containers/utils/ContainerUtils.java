@@ -54,6 +54,8 @@ public class ContainerUtils {
                 // Containers always exit with status "die", have to use exit code.
                 return true;
             case SWARM:
+            case SLURM:
+                // The Slurm poller reports job states as swarm task states, so they are judged the same way.
                 return ServiceTask.isSuccessfulStatus(status);
             case KUBERNETES:
                 return KubernetesPodPhase.isSuccessful(status);

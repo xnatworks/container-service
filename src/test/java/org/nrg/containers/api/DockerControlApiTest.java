@@ -76,7 +76,8 @@ public class DockerControlApiTest {
 
     @Parameterized.Parameters(name="backend={0}")
     public static Collection<Backend> backend() {
-        return EnumSet.allOf(Backend.class);
+        // TODO Slurm phase 5: put SLURM back once DockerControlApi handles it and this test mocks the Slurm client.
+        return EnumSet.complementOf(EnumSet.of(Backend.SLURM));
     }
 
     @Parameterized.Parameter

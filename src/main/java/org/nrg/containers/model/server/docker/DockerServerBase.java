@@ -129,6 +129,10 @@ public abstract class DockerServerBase implements Serializable {
     @Nullable @JsonProperty("kubernetes-tolerations")
     public abstract ImmutableList<KubernetesToleration> kubernetesTolerations();
 
+    /** Settings for the {@link Backend#SLURM} backend; null for every other backend. */
+    @Nullable @JsonProperty("slurm")
+    public abstract SlurmSettings slurm();
+
     /**
      * Whether the scheduled build directory cleanup job is enabled. Unrelated to {@link #autoCleanup()}, which
      * removes finished containers from the backend rather than files from disk.
@@ -187,7 +191,8 @@ public abstract class DockerServerBase implements Serializable {
                                           @JsonProperty("build-dir-retain-days-completed") final Integer buildDirRetainDaysCompleted,
                                           @JsonProperty("build-dir-retain-days-failed") final Integer buildDirRetainDaysFailed,
                                           @JsonProperty("build-dir-retain-days-killed") final Integer buildDirRetainDaysKilled,
-                                          @JsonProperty("build-dir-cleanup-time") final String buildDirCleanupTime) {
+                                          @JsonProperty("build-dir-cleanup-time") final String buildDirCleanupTime,
+                                          @Nullable @JsonProperty("slurm") final SlurmSettings slurm) {
             if (backend == null) {
                 backend = swarmMode != null && swarmMode ? Backend.SWARM : Backend.DOCKER;
             }
@@ -196,7 +201,7 @@ public abstract class DockerServerBase implements Serializable {
                     maxConcurrentFinalizingJobs, statusEmailEnabled, gpuVendor, archivePvcName, buildPvcName, combinedPvcName,
                     archivePathTranslation, buildPathTranslation, combinedPathTranslation, kubernetesTolerations,
                     buildDirCleanupEnabled, buildDirRetainDaysCompleted, buildDirRetainDaysFailed,
-                    buildDirRetainDaysKilled, buildDirCleanupTime);
+                    buildDirRetainDaysKilled, buildDirCleanupTime).toBuilder().slurm(slurm).build();
         }
 
         public static DockerServer create(final String name,
@@ -304,7 +309,10 @@ public abstract class DockerServerBase implements Serializable {
                     dockerServerEntity.getBuildDirRetainDaysCompleted(),
                     dockerServerEntity.getBuildDirRetainDaysFailed(),
                     dockerServerEntity.getBuildDirRetainDaysKilled(),
-                    dockerServerEntity.getBuildDirCleanupTime());
+                    dockerServerEntity.getBuildDirCleanupTime())
+                    .toBuilder()
+                    .slurm(SlurmSettings.isEmpty(dockerServerEntity) ? null : SlurmSettings.create(dockerServerEntity))
+                    .build();
         }
 
         public static DockerServer create(final DockerServerPrefsBean dockerServerPrefsBean) {
@@ -339,39 +347,9 @@ public abstract class DockerServerBase implements Serializable {
         }
 
         public DockerServer updateEventCheckTime(final Date newLastEventCheckTime) {
-
-            return newLastEventCheckTime == null ? this :
-                    create(
-                            this.id(),
-                            this.name(),
-                            this.host(),
-                            this.certPath(),
-                            this.backend(),
-                            newLastEventCheckTime,
-                            this.pathTranslationXnatPrefix(),
-                            this.pathTranslationDockerPrefix(),
-                            this.pullImagesOnXnatInit(),
-                            this.containerUser(),
-                            this.autoCleanup(),
-                            this.swarmConstraints(),
-                            this.maxConcurrentFinalizingJobs(),
-                            this.statusEmailEnabled(),
-                            this.gpuVendor(),
-                            this.archivePvcName(),
-                            this.buildPvcName(),
-                            this.combinedPvcName(),
-                            this.archivePathTranslation(),
-                            this.buildPathTranslation(),
-                            this.combinedPathTranslation(),
-                            this.kubernetesTolerations(),
-                            // Must be forwarded: this runs on the status polling path, so dropping these would
-                            // silently reset the cleanup settings every few seconds.
-                            this.buildDirCleanupEnabled(),
-                            this.buildDirRetainDaysCompleted(),
-                            this.buildDirRetainDaysFailed(),
-                            this.buildDirRetainDaysKilled(),
-                            this.buildDirCleanupTime()
-                    );
+            // toBuilder() rather than create(...): this runs on the status polling path every few seconds, so any
+            // field a positional create(...) forgot to forward would be silently reset.
+            return newLastEventCheckTime == null ? this : toBuilder().lastEventCheckTime(newLastEventCheckTime).build();
         }
 
         public static Builder builder() {
@@ -402,7 +380,8 @@ public abstract class DockerServerBase implements Serializable {
                     .archivePathTranslation(null)
                     .buildPathTranslation(null)
                     .combinedPathTranslation(null)
-                    .kubernetesTolerations(Collections.emptyList());
+                    .kubernetesTolerations(Collections.emptyList())
+                    .slurm(null);
         }
 
         public abstract Builder toBuilder();
@@ -444,6 +423,13 @@ public abstract class DockerServerBase implements Serializable {
                 if (StringUtils.isNotEmpty(combinedPathTranslation()) && (StringUtils.isNotEmpty(archivePathTranslation())
                         || StringUtils.isNotEmpty(buildPathTranslation()))) {
                     errors.add("You cannot have a Kubernetes server setup which has path translations for both separate and combined locations for build and archive directories. Please choose one or the other.");
+                }
+            } else if (backend() == Backend.SLURM) {
+                final SlurmSettings slurm = slurm();
+                if (slurm == null) {
+                    errors.add("Slurm settings are required for the Slurm backend");
+                } else {
+                    errors.addAll(slurm.validate());
                 }
             } else {
                 // Docker + Swarm must have a host configured
@@ -526,6 +512,7 @@ public abstract class DockerServerBase implements Serializable {
             public abstract Builder buildPathTranslation(String buildPathTranslation);
             public abstract Builder combinedPathTranslation(String combinedPathTranslation);
             public abstract Builder kubernetesTolerations(List<KubernetesToleration> kubernetesTolerations);
+            public abstract Builder slurm(SlurmSettings slurm);
             public abstract DockerServer build();
         }
     }
@@ -567,6 +554,7 @@ public abstract class DockerServerBase implements Serializable {
                                                   @JsonProperty("build-dir-retain-days-failed") final Integer buildDirRetainDaysFailed,
                                                   @JsonProperty("build-dir-retain-days-killed") final Integer buildDirRetainDaysKilled,
                                                   @JsonProperty("build-dir-cleanup-time") final String buildDirCleanupTime,
+                                                  @Nullable @JsonProperty("slurm") final SlurmSettings slurm,
                                                   @JsonProperty("ping") final Boolean ping) {
             if (backend == null) {
                 backend = swarmMode != null && swarmMode ? Backend.SWARM : Backend.DOCKER;
@@ -578,7 +566,7 @@ public abstract class DockerServerBase implements Serializable {
                     gpuVendor, archivePvcName, buildPvcName, combinedPvcName, archivePathTranslation, buildPathTranslation,
                     combinedPathTranslation, kubernetesTolerations, buildDirCleanupEnabled,
                     buildDirRetainDaysCompleted, buildDirRetainDaysFailed, buildDirRetainDaysKilled,
-                    buildDirCleanupTime, ping);
+                    buildDirCleanupTime, ping).toBuilder().slurm(slurm).build();
         }
 
         public static DockerServerWithPing create(final Long id,
@@ -676,7 +664,7 @@ public abstract class DockerServerBase implements Serializable {
                     dockerServer.buildDirRetainDaysKilled(),
                     dockerServer.buildDirCleanupTime(),
                     ping
-            );
+            ).toBuilder().slurm(dockerServer.slurm()).build();
         }
 
         public static Builder builder() {
@@ -708,7 +696,8 @@ public abstract class DockerServerBase implements Serializable {
                     .archivePathTranslation(null)
                     .buildPathTranslation(null)
                     .combinedPathTranslation(null)
-                    .kubernetesTolerations(Collections.emptyList());
+                    .kubernetesTolerations(Collections.emptyList())
+                    .slurm(null);
         }
 
         public abstract Builder toBuilder();
@@ -747,6 +736,7 @@ public abstract class DockerServerBase implements Serializable {
             public abstract Builder buildPathTranslation(String buildPathTranslation);
             public abstract Builder combinedPathTranslation(String combinedPathTranslation);
             public abstract Builder kubernetesTolerations(List<KubernetesToleration> kubernetesTolerations);
+            public abstract Builder slurm(SlurmSettings slurm);
             public abstract Builder ping(Boolean ping);
 
             public abstract DockerServerWithPing build();
@@ -906,7 +896,8 @@ public abstract class DockerServerBase implements Serializable {
                 Objects.equals(this.buildDirRetainDaysCompleted(), that.buildDirRetainDaysCompleted()) &&
                 Objects.equals(this.buildDirRetainDaysFailed(), that.buildDirRetainDaysFailed()) &&
                 Objects.equals(this.buildDirRetainDaysKilled(), that.buildDirRetainDaysKilled()) &&
-                Objects.equals(this.buildDirCleanupTime(), that.buildDirCleanupTime());
+                Objects.equals(this.buildDirCleanupTime(), that.buildDirCleanupTime()) &&
+                Objects.equals(this.slurm(), that.slurm());
     }
 
     @Override
@@ -917,7 +908,7 @@ public abstract class DockerServerBase implements Serializable {
                 statusEmailEnabled(), gpuVendor(), archivePvcName(), buildPvcName(), combinedPvcName(),
                 archivePathTranslation(), buildPathTranslation(), combinedPathTranslation(),
                 kubernetesTolerations(), buildDirCleanupEnabled(), buildDirRetainDaysCompleted(),
-                buildDirRetainDaysFailed(), buildDirRetainDaysKilled(), buildDirCleanupTime());
+                buildDirRetainDaysFailed(), buildDirRetainDaysKilled(), buildDirCleanupTime(), slurm());
     }
 
 }

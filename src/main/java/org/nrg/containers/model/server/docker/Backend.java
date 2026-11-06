@@ -9,7 +9,8 @@ import java.util.stream.Stream;
 public enum Backend {
     DOCKER,
     SWARM,
-    KUBERNETES;
+    KUBERNETES,
+    SLURM;
 
     @JsonValue
     @Override
@@ -17,6 +18,7 @@ public enum Backend {
         return this.name().toLowerCase();
     }
 
+    // SLURM is left out until swarm-style constraints are mapped to Slurm node features (--constraint).
     public static final Set<Backend> SUPPORTS_CONSTRAINTS =
             Stream.of(Backend.SWARM, Backend.KUBERNETES).collect(Collectors.toSet());
 }
