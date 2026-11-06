@@ -26,6 +26,7 @@ import static org.junit.Assume.assumeTrue;
  */
 public class SlurmClientLiveTest {
     private SlurmClient client;
+    private SlurmSettings settings;
 
     @Before
     public void setUp() throws Exception {
@@ -34,9 +35,10 @@ public class SlurmClientLiveTest {
         assumeTrue("SLURM_TEST_URL and SLURM_TEST_TOKEN_FILE are not set", StringUtils.isNoneBlank(url, tokenFile));
         final String token = new String(Files.readAllBytes(Paths.get(tokenFile.replaceFirst("^~", System.getProperty("user.home")))),
                 StandardCharsets.UTF_8).trim().replaceFirst("^SLURM_JWT=", "");
-        client = new SlurmClientImpl(SlurmSettings.builder().restUrl(url).token(token)
+        settings = SlurmSettings.builder().restUrl(url).token(token)
                 .user(StringUtils.defaultIfBlank(System.getenv("SLURM_TEST_USER"), "xnat"))
-                .partition(System.getenv("SLURM_TEST_PARTITION")).build());
+                .partition(System.getenv("SLURM_TEST_PARTITION")).build();
+        client = new SlurmClientImpl(settings);
     }
 
     @Test
@@ -65,6 +67,28 @@ public class SlurmClientLiveTest {
         assertThat(cancelled.toString(), cancelled.phase(), is(SlurmJobState.Phase.CANCELLED));
         assertThat(client.getJob(67_000_000L), is(Optional.empty()));
         assertThat(client.cancel(67_000_000L), is(false));
+    }
+
+    /**
+     * Runs a built job script on the cluster without needing apptainer there: with registry pulls disabled and no
+     * SIF, the script must fail the job with exit code 125 before it reaches the runtime.
+     */
+    @Test
+    public void builtScriptRunsUnderSlurm() throws Exception {
+        final org.nrg.containers.model.container.auto.Container container = org.nrg.containers.model.container.auto.Container.builder()
+                .databaseId(1L).commandId(1L).wrapperId(1L).userId("live-test")
+                .backend(org.nrg.containers.model.server.docker.Backend.SLURM)
+                .dockerImage("busybox:latest").commandLine("echo hello").build();
+        final String jobDir = "/tmp/xnat-live-test-" + System.currentTimeMillis();
+        final SlurmJobRequest request = SlurmJobBuilder.build(container,
+                settings.toBuilder().allowDockerPull(false).sifDirectory("/nonexistent/sif").build(),
+                SlurmJobPaths.create(jobDir, jobDir));
+
+        final long jobId = client.submit(request.toBuilder().hold(false).timeLimitMinutes(2).build());
+        final SlurmJobState state = waitWhileActive(jobId);
+
+        assertThat(state.toString(), state.phase(), is(SlurmJobState.Phase.FAILED));
+        assertThat(state.toString(), state.exitCode(), is(SlurmJobBuilder.EXIT_IMAGE_UNAVAILABLE));
     }
 
     private SlurmJobState waitWhilePending(final long jobId) throws Exception {
