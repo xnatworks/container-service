@@ -66,6 +66,18 @@ public class SlurmTokenCarryOverTest {
         assertThat(saved.getSlurmToken(), is(STORED_TOKEN));
     }
 
+    /** The admin UI submits its (hidden) Slurm fields whatever the backend; a Docker server must not keep them. */
+    @Test
+    public void otherBackendsDropSlurmSettings() throws Exception {
+        final DockerServer docker = DockerServer.builder().name("d").backend(Backend.DOCKER).host("unix:///var/run/docker.sock")
+                .slurm(SlurmSettings.builder().build()).build();
+
+        final DockerServerEntity saved = service.fromPojo(docker);
+
+        assertThat(saved.getSlurmToken(), is(org.hamcrest.Matchers.nullValue()));
+        assertThat(saved.getSlurmRuntime(), is(org.hamcrest.Matchers.nullValue()));
+    }
+
     @Test
     public void aNewTokenReplacesTheStoredOne() throws Exception {
         when(entityService.retrieve(7L)).thenReturn(storedEntity());

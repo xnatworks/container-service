@@ -3,6 +3,7 @@ package org.nrg.containers.services.impl;
 import org.apache.commons.lang3.StringUtils;
 import org.nrg.containers.api.KubernetesClientFactory;
 import org.nrg.containers.exceptions.InvalidDefinitionException;
+import org.nrg.containers.model.server.docker.Backend;
 import org.nrg.containers.model.server.docker.DockerServerBase.DockerServer;
 import org.nrg.containers.model.server.docker.DockerServerEntity;
 import org.nrg.containers.model.server.docker.SlurmSettings;
@@ -74,7 +75,10 @@ public class DockerServerServiceImpl implements DockerServerService {
     @Nonnull
     public DockerServerEntity fromPojo(final DockerServer submitted) throws InvalidDefinitionException {
         final DockerServerEntity template = dockerServerEntityService.retrieve(submitted.id());
-        final DockerServer dockerServer = withStoredSlurmToken(submitted, template);
+        // The admin UI submits its Slurm fields whatever the backend; only a Slurm server keeps them.
+        final DockerServer dockerServer = submitted.backend() == Backend.SLURM
+                ? withStoredSlurmToken(submitted, template)
+                : submitted.slurm() == null ? submitted : submitted.toBuilder().slurm(null).build();
         dockerServer.validate();
         return template == null ? DockerServerEntity.create(dockerServer) : template.update(dockerServer);
     }

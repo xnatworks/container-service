@@ -145,6 +145,27 @@ public class SlurmSettingsTest {
     }
 
     @Test
+    public void theTokenExpiryIsReportedButNotTheToken() throws Exception {
+        final String claims = java.util.Base64.getUrlEncoder().withoutPadding()
+                .encodeToString("{\"exp\":1700000000}".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        final String jwt = "eyJhbGciOiJIUzI1NiJ9." + claims + ".sig";
+        final JsonNode json = mapper.valueToTree(DockerServerWithPing.create(slurmServer(valid().token(jwt).build()), true));
+
+        assertThat(json.get("slurm").get("token-expires-at").asText(), is("2023-11-14T22:13:20Z"));
+        assertThat(mapper.writeValueAsString(json), not(containsString(claims)));
+        assertThat(mapper.valueToTree(valid().build()).get("token-expires-at").isNull(), is(true));
+    }
+
+    /** A client may post back what it read; the read-only properties are ignored and the token is absent. */
+    @Test
+    public void readOnlyPropertiesAreAcceptedOnSave() throws Exception {
+        final SlurmSettings read = mapper.readValue("{\"rest-url\":\"https://slurm:6820\",\"user\":\"xnat\","
+                + "\"token-set\":true,\"token-expires-at\":\"2023-11-14T22:13:20Z\"}", SlurmSettings.class);
+        assertThat(read.tokenSet(), is(false));
+        assertThat(read.user(), is("xnat"));
+    }
+
+    @Test
     public void toStringMasksTheToken() {
         assertThat(slurmServer(valid().build()).toString(), not(containsString(TOKEN)));
     }
