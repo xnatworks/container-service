@@ -525,10 +525,10 @@ public class SlurmClientImplTest {
     public void tokenExpiryIsReadFromTheJwt() {
         final String claims = Base64.getUrlEncoder().withoutPadding()
                 .encodeToString("{\"exp\":1700000000,\"sun\":\"xnat\"}".getBytes(StandardCharsets.UTF_8));
-        assertThat(ServiceAccountCredentialProvider.tokenExpiry("eyJhbGciOiJIUzI1NiJ9." + claims + ".sig"),
+        assertThat(SlurmSettings.jwtExpiry("eyJhbGciOiJIUzI1NiJ9." + claims + ".sig"),
                 is(Instant.ofEpochSecond(1700000000L)));
-        assertThat(ServiceAccountCredentialProvider.tokenExpiry("not-a-jwt"), is(nullValue()));
-        assertThat(ServiceAccountCredentialProvider.tokenExpiry(null), is(nullValue()));
+        assertThat(SlurmSettings.jwtExpiry("not-a-jwt"), is(nullValue()));
+        assertThat(SlurmSettings.jwtExpiry(null), is(nullValue()));
     }
 
     @Test

@@ -2,7 +2,10 @@ package org.nrg.containers.model.server.docker;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.auto.value.AutoValue;
 import org.apache.commons.lang3.StringUtils;
 
@@ -10,8 +13,11 @@ import javax.annotation.Nullable;
 import java.io.Serializable;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Base64;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
@@ -32,6 +38,7 @@ import java.util.regex.Pattern;
  * without one keeps the stored token. {@link #tokenSet()} tells clients whether one is stored.
  */
 @AutoValue
+@JsonIgnoreProperties(value = {"token-set", "token-expires-at"}, allowGetters = true)
 public abstract class SlurmSettings implements Serializable {
     private static final long serialVersionUID = 1L;
 
@@ -52,6 +59,7 @@ public abstract class SlurmSettings implements Serializable {
     public static final String RUNTIME_SINGULARITY = "singularity";
     public static final List<String> RUNTIMES = Collections.unmodifiableList(Arrays.asList(RUNTIME_APPTAINER, RUNTIME_SINGULARITY));
 
+    private static final ObjectMapper JWT_MAPPER = new ObjectMapper();
     private static final Pattern API_VERSION_PATTERN = Pattern.compile("^v(\\d+)\\.(\\d+)\\.(\\d+)$");
 
     /** Base URL of slurmrestd, e.g. {@code https://slurm.example.org:6820}. */
@@ -98,6 +106,39 @@ public abstract class SlurmSettings implements Serializable {
     @JsonProperty("token-set")
     public boolean tokenSet() {
         return StringUtils.isNotBlank(token());
+    }
+
+    /** When the stored token expires (ISO-8601), so the admin UI can warn before jobs stop submitting; null if unknown. */
+    @Nullable
+    @JsonProperty("token-expires-at")
+    public String tokenExpiresAt() {
+        final Instant expiry = jwtExpiry(token());
+        return expiry == null ? null : expiry.toString();
+    }
+
+    /**
+     * Reads the {@code exp} claim from a JWT without verifying it. slurmctld verifies the token; XNAT only uses the
+     * expiry to warn admins. Tokens from {@code scontrol token} last 30 minutes unless created with a longer
+     * {@code lifespan}, which is the most likely way a working configuration stops working.
+     *
+     * @return the expiry, or null when the token is not a JWT or has no {@code exp} claim
+     */
+    @Nullable
+    public static Instant jwtExpiry(@Nullable final String token) {
+        if (StringUtils.isBlank(token)) {
+            return null;
+        }
+        final String[] parts = token.split("\\.");
+        if (parts.length < 2) {
+            return null;
+        }
+        try {
+            final JsonNode claims = JWT_MAPPER.readTree(new String(Base64.getUrlDecoder().decode(parts[1]), StandardCharsets.UTF_8));
+            final JsonNode exp = claims == null ? null : claims.get("exp");
+            return exp != null && exp.canConvertToLong() ? Instant.ofEpochSecond(exp.asLong()) : null;
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     @JsonCreator
