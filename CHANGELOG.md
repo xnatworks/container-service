@@ -1,5 +1,20 @@
 # Changelog
 
+## 3.9.0-slurm
+
+A 3.9.0 build with the Slurm backend from `feature/slurm-support`, for sites on XNAT 1.10 that need Slurm before they move to 4.0.0 and XNAT 1.11. The status updater still runs only on the node flagged with `xnat.is_primary_node`.
+
+### Compatibility
+* Requires XNAT 1.10.1 or later, like 3.9.0.
+
+### Features
+* Added a Slurm compute backend. XNAT submits each container as a Slurm batch job through slurmrestd, and the job runs the command's Docker image with Apptainer or Singularity on the compute node. Containers are followed to completion, finalized, killed and cleaned up as on the other backends, and their logs can be watched live from the history page. Configured under Administer > Plugin Settings > Container Service > Compute Backend by choosing the Slurm type. See [Container Service on Slurm: Setup](docs/slurm/container-service-on-slurm-setup.md).
+    * Requires slurmrestd API v0.0.40 or newer (Slurm 23.11+) with JWT authentication, and Apptainer 1.1+ or SingularityCE 3.10+ on the compute nodes. XNAT's archive and build directories must be on a filesystem the compute nodes share, and the cluster account needs write access to the build directory.
+    * Every job runs as one cluster account, with a JWT stored on the container server. The token is never returned by the API or UI, but it is stored unencrypted in the database. XNAT warns when it is within 7 days of expiring, and cannot renew it yet.
+    * Jobs run a prebuilt SIF file from a configured directory when there is one, and otherwise pull the image from its registry. Pulls can be turned off for clusters without registry access.
+    * Partition, account, QOS and time limit apply to every job. Per-command overrides, per-user submission, automatic token renewal and building SIF files from XNAT are planned.
+    * Saving a container server of another type now discards any Slurm settings submitted with it.
+
 ## 3.9.0
 
 ### Compatibility
