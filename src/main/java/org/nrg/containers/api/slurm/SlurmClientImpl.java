@@ -63,12 +63,6 @@ public class SlurmClientImpl implements SlurmClient {
     private static final Pattern ACCOUNTING_JOB_PATH = Pattern.compile("^/slurmdb/(v\\d+\\.\\d+\\.\\d+)/job/\\{job_id}/?$");
     private static final int MAX_BODY_IN_MESSAGE = 300;
 
-    /**
-     * v0.0.40 rejects a submission unless the script is a top-level field ("Populated "script" field is required");
-     * later versions take it as {@code job.script}.
-     */
-    private static final String SCRIPT_AT_TOP_LEVEL = "v0.0.40";
-
     /** {@code ESLURM_JOB_HELD}: the expected submit result for a job submitted held. */
     private static final int JOB_HELD = 2042;
 
@@ -141,11 +135,11 @@ public class SlurmClientImpl implements SlurmClient {
         final Endpoints endpoints = endpoints();
         final ObjectNode body = mapper.createObjectNode();
         final ObjectNode job = jobDescription(request);
-        if (SCRIPT_AT_TOP_LEVEL.equals(endpoints.apiVersion)) {
-            body.put("script", request.script());
-        } else {
-            job.put("script", request.script());
-        }
+        // The script goes in both places. v0.0.40 rejects a submission without the top-level field ("Populated
+        // "script" field is required") and accepts job.script alongside it; later versions document the top-level
+        // field as the same script as job.script.
+        body.put("script", request.script());
+        job.put("script", request.script());
         body.set("job", job);
 
         log.debug("Submitting Slurm job {}", request);

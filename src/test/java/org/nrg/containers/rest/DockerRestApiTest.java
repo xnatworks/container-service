@@ -18,8 +18,10 @@ import org.nrg.containers.model.dockerhub.DockerHubBase.DockerHub;
 import org.nrg.containers.model.dockerhub.DockerHubBase.DockerHubWithPing;
 import org.nrg.containers.model.image.docker.DockerImage;
 import org.nrg.containers.model.image.docker.DockerImageAndCommandSummary;
+import org.nrg.containers.model.server.docker.Backend;
 import org.nrg.containers.model.server.docker.DockerServerBase.DockerServer;
 import org.nrg.containers.model.server.docker.DockerServerBase.DockerServerWithPing;
+import org.nrg.containers.model.server.docker.SlurmSettings;
 import org.nrg.containers.services.DockerService;
 import org.nrg.framework.exceptions.NotFoundException;
 import org.nrg.xdat.security.services.RoleServiceI;
@@ -205,6 +207,56 @@ public class DockerRestApiTest {
         // assertThat(exceptionResponseNonAdmin, containsString(NON_ADMIN_USERNAME));
         // verify(mockContainerControlApi, times(1)).setServer(MOCK_CONTAINER_SERVER); // Method has still been called only once
 
+    }
+
+    private static final String SLURM_JWT = "eyJhbGciOiJIUzI1NiJ9.eyJleHAiOjE3MDAwMDAwMDB9.signature";
+
+    /** GET never returns the Slurm token, only whether one is stored and when it expires. */
+    @Test
+    public void testGetSlurmServerHidesTheToken() throws Exception {
+        final DockerServer slurm = DockerServer.builder().id(5L).name("hpc").backend(Backend.SLURM)
+                .slurm(SlurmSettings.builder().restUrl("https://slurm.example.org:6820").user("xnat").token(SLURM_JWT).build())
+                .build();
+        // doReturn: the shared mock may still be stubbed to throw by testGetServer, and when() would call it.
+        org.mockito.Mockito.doReturn(DockerServerWithPing.create(slurm, true)).when(mockDockerService).getServer();
+
+        final String response = mockMvc.perform(get("/docker/server").accept(JSON)
+                        .with(authentication(ADMIN_AUTH)).with(csrf()).with(testSecurityContext()))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+
+        assertThat(response, not(containsString(SLURM_JWT)));
+        assertThat(response, not(containsString("signature")));
+        final com.fasterxml.jackson.databind.JsonNode json = mapper.readTree(response).get("slurm");
+        assertThat(json.has("token"), is(false));
+        assertThat(json.get("token-set").asBoolean(), is(true));
+        assertThat(json.get("token-expires-at").asText(), is("2023-11-14T22:13:20Z"));
+        assertThat(json.get("user").asText(), is("xnat"));
+    }
+
+    /** The admin UI posts its Slurm fields with a blank token, and may include the read-only properties. */
+    @Test
+    public void testSetSlurmServerAcceptsWhatTheUiSends() throws Exception {
+        when(mockDockerService.setServer(org.mockito.ArgumentMatchers.any(DockerServer.class))).thenReturn(SERVER_WITH_PING);
+        final String body = "{\"name\":\"hpc\",\"backend\":\"slurm\",\"slurm\":{"
+                + "\"rest-url\":\"https://slurm.example.org:6820\",\"user\":\"xnat\",\"token\":\"\","
+                + "\"api-version\":\"\",\"time-limit\":\"4:00:00\",\"runtime\":\"apptainer\","
+                + "\"allow-docker-pull\":\"false\",\"sif-directory\":\"/shared/sif\","
+                + "\"token-set\":true,\"token-expires-at\":\"2023-11-14T22:13:20Z\"}}";
+
+        mockMvc.perform(post("/docker/server").content(body).contentType(JSON)
+                        .with(authentication(ADMIN_AUTH)).with(csrf()).with(testSecurityContext()))
+                .andExpect(status().isCreated());
+
+        final org.mockito.ArgumentCaptor<DockerServer> saved = org.mockito.ArgumentCaptor.forClass(DockerServer.class);
+        org.mockito.Mockito.verify(mockDockerService, org.mockito.Mockito.atLeastOnce()).setServer(saved.capture());
+        final SlurmSettings slurm = saved.getValue().slurm();
+        assertThat(saved.getValue().backend(), is(Backend.SLURM));
+        assertThat(slurm.tokenSet(), is(false));
+        assertThat(slurm.apiVersion(), is(org.hamcrest.Matchers.nullValue()));
+        assertThat(slurm.timeLimit(), is("4:00:00"));
+        assertThat(slurm.allowDockerPull(), is(false));
+        assertThat(slurm.sifDirectory(), is("/shared/sif"));
     }
 
     @Test

@@ -242,6 +242,32 @@ class SlurmJobPollerTest {
         assertEquals(NOW.toString(), task.statusTime());
     }
 
+    /** The file holds the container's own exit status, so it wins when Slurm reports something else. */
+    @Test
+    void theExitCodeFileOverridesSlurmsExitCode() throws Exception {
+        writeExitCode("3\n");
+        changed(job("COMPLETED").exitCode(0).endTime(NOW.getEpochSecond()).build());
+
+        poll();
+
+        final ServiceTask task = onlyTask();
+        assertEquals(TaskState.FAILED.getValue(), task.status());
+        assertEquals(3L, task.exitCode());
+    }
+
+    /** A shared filesystem may not show the file to XNAT yet; Slurm's own exit code is used instead. */
+    @Test
+    void aFinishedJobWithoutAnExitCodeFileUsesSlurmsExitCode() throws Exception {
+        changed(job("FAILED").exitCode(2).reason("NonZeroExitCode").endTime(NOW.getEpochSecond()).build());
+
+        poll();
+
+        final ServiceTask task = onlyTask();
+        assertEquals(TaskState.FAILED.getValue(), task.status());
+        assertEquals(2L, task.exitCode());
+        assertEquals("Slurm job 1234 failed, exit code 2", task.message());
+    }
+
     @Test
     void failuresExplainWhatHappened() throws Exception {
         changed(job("TIMEOUT").exitCode(0).signal("TERM").endTime(NOW.getEpochSecond()).build());

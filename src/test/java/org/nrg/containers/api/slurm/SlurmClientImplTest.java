@@ -240,14 +240,14 @@ public class SlurmClientImplTest {
     }
 
     @Test
-    public void submitSendsAHeldJobWithWrappedNumbersAndATopLevelScriptForV0040() throws Exception {
+    public void submitSendsAHeldJobWithWrappedNumbers() throws Exception {
         expectOpenApi(true, "v0.0.40");
         server.expect(requestTo(URL + "/slurm/v0.0.40/job/submit"))
                 .andExpect(method(HttpMethod.POST))
                 .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
                 .andExpect(jsonPath("$.job.name").value("xnat-42"))
                 .andExpect(jsonPath("$.script").value("#!/bin/bash\necho hello\n"))
-                .andExpect(jsonPath("$.job.script").doesNotExist())
+                .andExpect(jsonPath("$.job.script").value("#!/bin/bash\necho hello\n"))
                 .andExpect(jsonPath("$.job.current_working_directory").value("/shared/build/42"))
                 .andExpect(jsonPath("$.job.standard_output").value("/shared/build/42/stdout.log"))
                 .andExpect(jsonPath("$.job.standard_error").doesNotExist())
@@ -270,14 +270,20 @@ public class SlurmClientImplTest {
         server.verify();
     }
 
+    /** Every version gets the same body: the script at the top level and in the job, as v0.0.40 needs. */
     @Test
-    public void laterVersionsTakeTheScriptInsideTheJob() throws Exception {
-        expectOpenApi(true, "v0.0.40", "v0.0.41");
-        server.expect(requestTo(URL + "/slurm/v0.0.41/job/submit"))
-                .andExpect(jsonPath("$.script").doesNotExist())
-                .andExpect(jsonPath("$.job.script").value("#!/bin/bash\necho hello\n"))
-                .andRespond(json("{\"job_id\":8}"));
-        assertThat(client().submit(request().build()), is(8L));
+    public void everyVersionGetsTheScriptInBothPlaces() throws Exception {
+        for (final String version : SlurmSettings.SUPPORTED_API_VERSIONS) {
+            setUp();
+            expectOpenApi(true, version);
+            server.expect(requestTo(URL + "/slurm/" + version + "/job/submit"))
+                    .andExpect(jsonPath("$.script").value("#!/bin/bash\necho hello\n"))
+                    .andExpect(jsonPath("$.job.script").value("#!/bin/bash\necho hello\n"))
+                    .andExpect(jsonPath("$.job.time_limit.number").value(120))
+                    .andRespond(json("{\"job_id\":8}"));
+            assertThat(version, client().submit(request().build()), is(8L));
+            server.verify();
+        }
     }
 
     @Test

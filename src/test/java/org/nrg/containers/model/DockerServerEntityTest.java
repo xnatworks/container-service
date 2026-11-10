@@ -17,6 +17,7 @@ import org.nrg.containers.model.server.docker.DockerServerBase.KubernetesTolerat
 import org.nrg.containers.model.server.docker.DockerServerEntity;
 import org.nrg.containers.model.server.docker.DockerServerEntityKubernetesToleration;
 import org.nrg.containers.model.server.docker.DockerServerEntitySwarmConstraint;
+import org.nrg.containers.model.server.docker.SlurmSettings;
 import org.nrg.containers.services.DockerServerEntityService;
 import org.nrg.containers.services.DockerServerService;
 import org.nrg.containers.utils.TestingUtils;
@@ -237,6 +238,52 @@ public class DockerServerEntityTest {
         TestingUtils.commitTransaction();
         server = dockerServerService.getServer();
         assertThat(server, isIgnoreId(updatedServer));
+    }
+
+    private final static SlurmSettings SLURM_SETTINGS = SlurmSettings.builder()
+            .restUrl("https://slurm.example.org:6820")
+            .apiVersion("v0.0.41")
+            .user("xnat")
+            .token("eyJhbGciOiJIUzI1NiJ9.eyJleHAiOjE3MDAwMDAwMDB9.signature")
+            .partition("gpu")
+            .account("lab")
+            .qos("normal")
+            .timeLimit("1-12:00:00")
+            .runtime("singularity")
+            .sifDirectory("/shared/sif")
+            .allowDockerPull(false)
+            .pullCacheDirectory("/shared/cache")
+            .build();
+    private final static DockerServer SLURM = DockerServer.builder()
+            .backend(Backend.SLURM)
+            .name("TestSlurm")
+            .pathTranslationXnatPrefix("/data/xnat")
+            .pathTranslationDockerPrefix("/cluster/xnat")
+            .slurm(SLURM_SETTINGS)
+            .build();
+
+    /** Every Slurm setting survives a save and reload through Hibernate, and a save without a token keeps it. */
+    @Test
+    @DirtiesContext
+    public void testSlurmServerPersistence() throws Exception {
+        final DockerServer created = dockerServerService.setServer(SLURM);
+        TestingUtils.commitTransaction();
+        assertThat(created, isIgnoreId(SLURM));
+        assertThat(dockerServerService.getServer().slurm(), is(SLURM_SETTINGS));
+
+        // What the admin UI sends back after reading the configuration: everything but the token.
+        final SlurmSettings withoutToken = SLURM_SETTINGS.toBuilder().token(null).partition("batch").build();
+        dockerServerService.update(SLURM.toBuilder().id(created.id()).slurm(withoutToken).build());
+        TestingUtils.commitTransaction();
+        final SlurmSettings updated = dockerServerService.getServer().slurm();
+        assertThat(updated.partition(), is("batch"));
+        assertThat(updated.token(), is(SLURM_SETTINGS.token()));
+
+        // Switching the server to another backend drops the Slurm settings, token included.
+        dockerServerService.update(STANDALONE.toBuilder().id(created.id()).slurm(SLURM_SETTINGS).build());
+        TestingUtils.commitTransaction();
+        assertThat(dockerServerService.getServer().slurm(), is(nullValue()));
+        assertThat(dockerServerEntityService.retrieve(created.id()).getSlurmToken(), is(nullValue()));
     }
 
     @Test
