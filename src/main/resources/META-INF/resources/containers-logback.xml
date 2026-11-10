@@ -48,6 +48,15 @@
     <logger additivity="false" level="INFO" name="org.nrg.containers.events.ContainerStatusUpdater">
         <appender-ref ref="containers"/>
     </logger>
+    <!-- Slurm backend: a few lines per job (submitted, released, cancelled), the slurmrestd API version in use, and
+         warnings such as missing slurmdbd endpoints. Raise this to DEBUG to see submissions and slurmrestd's warnings;
+         the token and job environments are never logged. -->
+    <logger additivity="false" level="INFO" name="org.nrg.containers.api.slurm">
+        <appender-ref ref="containers"/>
+    </logger>
+    <logger additivity="false" level="INFO" name="org.nrg.containers.events.SlurmJobPoller">
+        <appender-ref ref="containers"/>
+    </logger>
     <logger additivity="false" level="WARN" name="org.mandas">
         <appender-ref ref="spotify"/>
     </logger>
