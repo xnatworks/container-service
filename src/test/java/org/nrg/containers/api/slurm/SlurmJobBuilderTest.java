@@ -20,7 +20,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 import static org.hamcrest.Matchers.contains;
@@ -160,7 +162,7 @@ public class SlurmJobBuilderTest {
                 settings().sifDirectory("/shared/sif/").pullCacheDirectory("/shared/cache").build(), PATHS).script();
 
         assertThat(script, containsString("export APPTAINER_CACHEDIR='/shared/cache'"));
-        assertThat(script, containsString("SIF='/shared/sif/xnat_dcm2niix_1.0.2.sif'"));
+        assertThat(script, containsString("SIF='/shared/sif/xnat/dcm2niix/1.0.2.sif'"));
         assertThat(script, containsString("if [ -f \"$SIF\" ]; then\n    IMAGE=\"$SIF\"\nelse\n    IMAGE='docker://xnat/dcm2niix:1.0.2'\nfi"));
     }
 
@@ -176,12 +178,48 @@ public class SlurmJobBuilderTest {
     }
 
     @Test
-    public void sifFileNamesAreDeterministic() {
-        assertThat(SlurmJobBuilder.sifFileName("xnat/dcm2niix:1.0.2"), is("xnat_dcm2niix_1.0.2.sif"));
-        assertThat(SlurmJobBuilder.sifFileName("ubuntu"), is("ubuntu_latest.sif"));
-        assertThat(SlurmJobBuilder.sifFileName("docker.io/library/ubuntu:22.04"), is("ubuntu_22.04.sif"));
-        assertThat(SlurmJobBuilder.sifFileName("registry.example.org:5000/lab/tool"), is("registry.example.org_5000_lab_tool_latest.sif"));
-        assertThat(SlurmJobBuilder.sifFileName("lab/tool@sha256:abc123"), is("lab_tool_sha256_abc123.sif"));
+    public void sifPathsFollowTheImageReference() {
+        assertThat(SlurmJobBuilder.sifPath("xnat/dcm2niix:1.0.2"), is("xnat/dcm2niix/1.0.2.sif"));
+        assertThat(SlurmJobBuilder.sifPath("ubuntu"), is("ubuntu/latest.sif"));
+        assertThat(SlurmJobBuilder.sifPath("docker.io/library/ubuntu:22.04"), is("ubuntu/22.04.sif"));
+        assertThat(SlurmJobBuilder.sifPath("docker://ubuntu:22.04"), is("ubuntu/22.04.sif"));
+        assertThat(SlurmJobBuilder.sifPath("registry.example.org:5000/lab/tool"), is("registry.example.org:5000/lab/tool/latest.sif"));
+        assertThat(SlurmJobBuilder.sifPath("lab/tool@sha256:abc123"), is("lab/tool/sha256:abc123.sif"));
+        assertThat(SlurmJobBuilder.sifPath("lab/tool:2.0@sha256:abc123"), is("lab/tool/sha256:abc123.sif"));
+    }
+
+    @Test
+    public void differentImagesNeverShareASifPath() {
+        final String[] images = {"x/a_b:c", "x_a/b:c", "x/a:b_c", "lab/tool_v2", "lab/tool:v2", "lab/tool/v2",
+                "registry:5000/a", "registry/5000/a", "a/b:sha256_abc", "a/b@sha256:abc"};
+        final Set<String> paths = new HashSet<>();
+        for (final String image : images) {
+            assertThat(image, paths.add(SlurmJobBuilder.sifPath(image)), is(true));
+        }
+    }
+
+    @Test
+    public void referencesThatCouldLeaveTheSifDirectoryAreRejected() {
+        for (final String image : new String[]{"../../etc/tool", "lab/../tool", "lab//tool", "lab/.hidden", "lab/tool:", "/abs/tool", ""}) {
+            try {
+                SlurmJobBuilder.sifPath(image);
+                fail("Expected " + image + " to be rejected");
+            } catch (IllegalArgumentException expected) {
+                // expected
+            }
+        }
+    }
+
+    @Test
+    public void aBadReferenceFailsTheLaunchOnlyWhenThereIsASifDirectory() throws Exception {
+        final Container bad = container().dockerImage("lab/../tool").build();
+        SlurmJobBuilder.build(bad, settings().build(), PATHS);
+        try {
+            SlurmJobBuilder.build(bad, settings().sifDirectory("/shared/sif").build(), PATHS);
+            fail("Expected an error");
+        } catch (ContainerException e) {
+            assertThat(e.getMessage(), containsString("lab/../tool"));
+        }
     }
 
     @Test

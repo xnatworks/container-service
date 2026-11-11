@@ -18,6 +18,7 @@ import org.nrg.xdat.preferences.SiteConfigPreferences;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermissions;
 
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
@@ -25,6 +26,7 @@ import static org.hamcrest.Matchers.nullValue;
 import static org.hamcrest.Matchers.startsWith;
 import static org.junit.Assert.assertThat;
 import static org.junit.Assert.fail;
+import static org.junit.Assume.assumeFalse;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -106,6 +108,28 @@ public class SlurmBackendTest {
         verify(client).cancel(1234L);
         assertThat(Files.exists(jobDir()), is(false));
         assertThat(Files.isDirectory(buildPath.resolve("slurm")), is(true));
+    }
+
+    @Test
+    public void removeReportsWhatItCouldNotDelete() throws Exception {
+        writeLog(SlurmJobPaths.STDOUT, "done");
+        final Path locked = Files.createDirectories(jobDir().resolve("work/locked"));
+        Files.write(locked.resolve("held-open"), new byte[0]);
+        // A directory without write permission keeps its files; root ignores that, so the test means nothing there.
+        assumeFalse("root".equals(System.getProperty("user.name")));
+        Files.setPosixFilePermissions(locked, PosixFilePermissions.fromString("r-xr-xr-x"));
+        try {
+            backend.remove(container("1234"), server);
+            fail("Expected an error");
+        } catch (ContainerBackendException e) {
+            assertThat(e.getMessage(), containsString(jobDir().toString()));
+            assertThat(e.getCause().getMessage(), containsString(jobDir().toString()));
+        } finally {
+            Files.setPosixFilePermissions(locked, PosixFilePermissions.fromString("rwxr-xr-x"));
+        }
+        // Everything it could delete is gone.
+        assertThat(Files.exists(jobDir().resolve(SlurmJobPaths.STDOUT)), is(false));
+        assertThat(Files.exists(locked.resolve("held-open")), is(true));
     }
 
     @Test

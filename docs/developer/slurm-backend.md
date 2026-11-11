@@ -28,6 +28,11 @@ page covers the code and how to test it.
 - **Exit codes.** The job script writes the container's exit status to `exit-code` atomically (`.tmp` then `mv`).
   The poller reads it only once a job is terminal, and prefers it to Slurm's exit code. If the file is missing, it uses
   Slurm's.
+- **SIF paths.** `SlurmJobBuilder.sifPath` maps an image reference to a path under the SIF directory: each `/` a
+  directory, the tag or digest the file name. Flattening the reference into one file name (replacing `/`, `:` and `@`
+  with `_`) let different images share a file. Parts are checked so a reference cannot leave the SIF directory.
+- **Cleanup.** `SlurmBackend.remove` deletes what it can of the job directory and throws if anything is left, so
+  `ContainerServiceImpl.cleanupContainers` logs one warning naming it.
 - **Live logs.** The history page polls `logSince` with a timestamp and appends what it gets. Slurm logs have no
   per-line timestamps, so for Slurm the "timestamp" carries the byte offset already read (epoch seconds = offset).
   `SlurmBackend.getLogFrom` returns at most 1 MiB of whole lines per call.

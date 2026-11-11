@@ -219,31 +219,40 @@ For each job, the script looks for a SIF file for the command's image in the SIF
 it. If not, it pulls `docker://<image>`, unless pulls are turned off, in which case the job fails at once with exit
 code **125** and a message in stderr naming the SIF file it looked for.
 
-### SIF file names
+### Where XNAT looks for a SIF
 
-XNAT looks for the image reference with Docker Hub's implicit `docker.io/` and `library/` removed, `:latest` added
-when there is no tag or digest, and `/`, `:` and `@` replaced by `_`, plus `.sif`:
+XNAT takes the image reference, removes Docker Hub's implicit `docker.io/` and `library/`, and adds `:latest` when
+there is no tag or digest. Each `/` in the image name becomes a directory under the SIF directory, and the tag or
+digest becomes the file name, plus `.sif`:
 
-| Image in the command | SIF file XNAT looks for |
+| Image in the command | SIF XNAT looks for, under the SIF directory |
 |---|---|
-| `busybox` | `busybox_latest.sif` |
-| `xnat/dcm2niix:1.0.2` | `xnat_dcm2niix_1.0.2.sif` |
-| `ghcr.io/org/tool:2.1` | `ghcr.io_org_tool_2.1.sif` |
+| `busybox` | `busybox/latest.sif` |
+| `xnat/dcm2niix:1.0.2` | `xnat/dcm2niix/1.0.2.sif` |
+| `ghcr.io/org/tool:2.1` | `ghcr.io/org/tool/2.1.sif` |
+| `registry.example.org:5000/lab/tool` | `registry.example.org:5000/lab/tool/latest.sif` |
+| `lab/tool@sha256:4f3c...` | `lab/tool/sha256:4f3c....sif` |
 
-Build one on any host with Apptainer and registry access, then copy it into the SIF directory:
+Two different images never map to the same file. If an image has both a tag and a digest, the digest names the file.
+A reference with a part that cannot be a file name, such as `..`, fails the launch while a SIF directory is set.
+
+Build one on any host with Apptainer and registry access, then copy it into the SIF directory, keeping the
+directories:
 
 ```bash
-apptainer build xnat_dcm2niix_1.0.2.sif docker://xnat/dcm2niix:1.0.2
+mkdir -p xnat/dcm2niix
+apptainer build xnat/dcm2niix/1.0.2.sif docker://xnat/dcm2niix:1.0.2
 ```
 
-Building from an image in a local Docker daemon also works: `apptainer build <name>.sif docker-daemon://<image>`.
+Building from an image in a local Docker daemon also works: `apptainer build <path>.sif docker-daemon://<image>`.
 
 ### Air-gapped clusters
 
 If the compute nodes cannot reach image registries:
 
 1. Turn off **Pull images from registries?** and set the **SIF Directory**.
-2. Build a SIF for each command's image on a connected host, named as above, and copy it to the SIF directory.
+2. Build a SIF for each command's image on a connected host, at the path described above, and copy it to the SIF
+   directory.
 3. When you add or update a command, add its SIF too. A missing SIF fails the job quickly with exit code 125, rather
    than after a network timeout on the node.
 
@@ -327,7 +336,9 @@ Launch it again with exit code 3: the status is **Failed**, with the message "Sl
   seconds), XNAT uses Slurm's exit code.
 - **Cleanup.** With auto-cleanup on, XNAT deletes each job directory after finalizing. With it off, job directories
   stay in `<build path>/slurm/` until you remove them, as Docker containers stay when auto-cleanup is off. The
-  scheduled build-directory cleanup does not remove them.
+  scheduled build-directory cleanup does not remove them. If XNAT cannot delete everything in a job directory, it
+  deletes what it can and logs a warning in `containers.log` naming the directory; remove the rest by hand. On NFS
+  the usual cause is a `.nfs*` file that a process still holds open.
 - **Token expiry.** Replace the token before it expires: create a new one with `scontrol token` and paste it into the
   container server settings. When it has expired, launches fail with an authentication error.
 - **Logs.** The Slurm backend logs to XNAT's `containers.log`: each submission, release and cancellation, the

@@ -181,20 +181,32 @@ public class SlurmBackend {
         }
     }
 
-    private static void deleteRecursively(final Path dir) throws IOException {
+    /**
+     * Deletes the directory and everything in it, carrying on past paths it cannot delete. If anything is left, it
+     * throws, naming the first path it could not delete: on NFS that is often a {@code .nfs*} file still held open,
+     * or output from a job that was still running when it was cancelled.
+     */
+    static void deleteRecursively(final Path dir) throws IOException {
         if (!Files.exists(dir)) {
             return;
         }
+        final IOException[] firstFailure = new IOException[1];
         try (Stream<Path> walk = Files.walk(dir)) {
             walk.sorted(Comparator.reverseOrder()).forEach(path -> {
                 try {
                     Files.deleteIfExists(path);
-                } catch (DirectoryNotEmptyException e) {
-                    log.debug("Could not delete {}: not empty", path);
                 } catch (IOException e) {
-                    log.warn("Could not delete {}: {}", path, e.toString());
+                    // A directory that is not empty because a file in it failed is reported by that file.
+                    if (firstFailure[0] == null && !(e instanceof DirectoryNotEmptyException)) {
+                        firstFailure[0] = e;
+                    }
+                    log.debug("Could not delete {}: {}", path, e.toString());
                 }
             });
+        }
+        if (Files.exists(dir)) {
+            throw new IOException("Could not delete everything in " + dir
+                    + (firstFailure[0] == null ? ": files appeared while it was being deleted" : ""), firstFailure[0]);
         }
     }
 
