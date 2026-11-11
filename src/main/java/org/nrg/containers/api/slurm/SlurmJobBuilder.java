@@ -29,8 +29,8 @@ import java.util.regex.Pattern;
  * </ul>
  * Both run with {@code --no-eval}, so arguments and environment values reach the container exactly as given, as
  * under Docker. That needs Apptainer 1.1 or later, or SingularityCE 3.10 or later.
- * The image is chosen on the compute node when the job starts: a SIF in {@link SlurmSettings#sifDirectory()} named by
- * {@link #sifFileName(String)} if present, otherwise {@code docker://} (unless registry pulls are disabled, in which
+ * The image is chosen on the compute node when the job starts: a SIF in {@link SlurmSettings#sifDirectory()} at
+ * {@link #sifPath(String)} if present, otherwise {@code docker://} (unless registry pulls are disabled, in which
  * case the job exits with {@value #EXIT_IMAGE_UNAVAILABLE}). XNAT therefore never needs to see the SIF directory.
  * <p>
  * Environment variables and secrets go into the job's environment with the runtime's {@code ENV_} prefix, never
@@ -43,6 +43,8 @@ public final class SlurmJobBuilder {
 
     private static final Pattern ENV_NAME = Pattern.compile("^[A-Za-z_][A-Za-z0-9_]*$");
     private static final Pattern GPU_COUNT = Pattern.compile("^\\d+$");
+    /** A host (with port), repository part, tag or digest. The first character keeps out "", "." and "..". */
+    private static final Pattern SIF_PATH_COMPONENT = Pattern.compile("^[A-Za-z0-9_][A-Za-z0-9._:+-]*$");
 
     private SlurmJobBuilder() {
     }
@@ -88,23 +90,48 @@ public final class SlurmJobBuilder {
     }
 
     /**
-     * The SIF file name XNAT looks for in the SIF directory: the image reference with Docker Hub's implicit
-     * {@code docker.io/} and {@code library/} removed, {@code :latest} added when there is no tag or digest, and
-     * {@code /}, {@code :} and {@code @} replaced by {@code _}. For example {@code xnat/dcm2niix:1.0.2} becomes
-     * {@code xnat_dcm2niix_1.0.2.sif} and {@code ubuntu} becomes {@code ubuntu_latest.sif}. Build one with
-     * {@code apptainer build xnat_dcm2niix_1.0.2.sif docker://xnat/dcm2niix:1.0.2}.
+     * Where XNAT looks for an image's SIF, relative to the SIF directory: the image reference with Docker Hub's implicit
+     * {@code docker.io/} and {@code library/} removed and {@code :latest} added when there is no tag or digest. Each
+     * {@code /} in the name becomes a directory and the tag or digest becomes the file name, so
+     * {@code xnat/dcm2niix:1.0.2} is {@code xnat/dcm2niix/1.0.2.sif}, {@code ubuntu} is {@code ubuntu/latest.sif} and
+     * {@code lab/tool@sha256:abc} is {@code lab/tool/sha256:abc.sif}. Distinct references never share a path: a tag
+     * cannot contain {@code :} and a digest always does. With both a tag and a digest, the digest names the file.
+     *
+     * @throws IllegalArgumentException if a part of the reference could not be a file name, such as {@code ..}
      */
-    public static String sifFileName(final String image) {
+    public static String sifPath(final String image) {
         String name = StringUtils.trimToEmpty(image);
         name = StringUtils.removeStart(name, "docker://");
         name = StringUtils.removeStart(name, "docker.io/");
         name = StringUtils.removeStart(name, "index.docker.io/");
         name = StringUtils.removeStart(name, "library/");
-        final String lastSegment = name.substring(name.lastIndexOf('/') + 1);
-        if (!lastSegment.contains(":") && !name.contains("@")) {
-            name = name + ":latest";
+
+        final String version;
+        final int at = name.indexOf('@');
+        if (at >= 0) {
+            version = name.substring(at + 1);
+            name = name.substring(0, at);
+            final int tag = name.lastIndexOf(':');
+            if (tag > name.lastIndexOf('/')) {
+                name = name.substring(0, tag);
+            }
+        } else {
+            final int tag = name.lastIndexOf(':');
+            if (tag > name.lastIndexOf('/')) {
+                version = name.substring(tag + 1);
+                name = name.substring(0, tag);
+            } else {
+                version = "latest";
+            }
         }
-        return name.replaceAll("[/:@]", "_") + ".sif";
+
+        final String path = name + "/" + version;
+        for (final String component : path.split("/", -1)) {
+            if (!SIF_PATH_COMPONENT.matcher(component).matches()) {
+                throw new IllegalArgumentException("\"" + image + "\" is not an image reference XNAT can look up in the SIF directory");
+            }
+        }
+        return path + ".sif";
     }
 
     static String script(final Container container, final SlurmSettings settings, final SlurmJobPaths paths, final boolean gpus)
@@ -155,7 +182,8 @@ public final class SlurmJobBuilder {
         return script.toString();
     }
 
-    private static void appendImageSelection(final StringBuilder script, final String image, final SlurmSettings settings) {
+    private static void appendImageSelection(final StringBuilder script, final String image, final SlurmSettings settings)
+            throws ContainerException {
         final String dockerRef = image.startsWith("docker://") ? image : "docker://" + image;
         final String runtimeVar = settings.runtime().toUpperCase(Locale.ROOT);
         final boolean pull = settings.allowDockerPull();
@@ -167,7 +195,12 @@ public final class SlurmJobBuilder {
             script.append("IMAGE=").append(quote(dockerRef)).append("\n\n");
             return;
         }
-        final String sif = StringUtils.stripEnd(settings.sifDirectory(), "/") + "/" + sifFileName(image);
+        final String sif;
+        try {
+            sif = StringUtils.stripEnd(settings.sifDirectory(), "/") + "/" + sifPath(image);
+        } catch (IllegalArgumentException e) {
+            throw new ContainerException(e.getMessage());
+        }
         script.append("SIF=").append(quote(sif)).append('\n');
         script.append("if [ -f \"$SIF\" ]; then\n");
         script.append("    IMAGE=\"$SIF\"\n");
