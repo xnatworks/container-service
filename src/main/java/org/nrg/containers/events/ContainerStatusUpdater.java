@@ -8,6 +8,7 @@ import org.nrg.containers.api.KubernetesClientFactory;
 import org.nrg.containers.events.model.ContainerEvent;
 import org.nrg.containers.events.model.DockerContainerEvent;
 import org.nrg.containers.events.model.ServiceTaskEvent;
+import org.nrg.containers.exceptions.ContainerBackendException;
 import org.nrg.containers.exceptions.ContainerException;
 import org.nrg.containers.exceptions.DockerServerException;
 import org.nrg.containers.exceptions.InvalidDefinitionException;
@@ -80,6 +81,7 @@ public class ContainerStatusUpdater implements Runnable {
     private final KubernetesClientFactory kubernetesClientFactory;
     private final JmsTemplate template;
     private final NodeLeader leader;
+    private final SlurmJobPoller slurmJobPoller;
 
     private final Object monitor = new Object();
 
@@ -99,13 +101,15 @@ public class ContainerStatusUpdater implements Runnable {
                                   final NrgEventServiceI eventService,
                                   final KubernetesClientFactory kubernetesClientFactory,
                                   final JmsTemplate template,
-                                  final NodeLockService nodeLockService) {
+                                  final NodeLockService nodeLockService,
+                                  final SlurmJobPoller slurmJobPoller) {
         this.containerControlApi = containerControlApi;
         this.containerService = containerService;
         this.dockerServerService = dockerServerService;
         this.eventService = eventService;
         this.kubernetesClientFactory = kubernetesClientFactory;
         this.template = template;
+        this.slurmJobPoller = slurmJobPoller;
         this.leader = nodeLockService.registerLeader(LEADER_LOCK, new Listener());
     }
 
@@ -280,6 +284,8 @@ public class ContainerStatusUpdater implements Runnable {
                 haveLoggedDockerConnectFailure = false;
                 haveLoggedXftInitFailure = false;
                 haveLoggedNoServerInDb = false;
+                // Another node may have moved Slurm jobs on while it led, so start from a clean slate.
+                slurmJobPoller.reset();
                 // The next tick starts the informer or resumes polling; nothing to do here.
             }
         }
@@ -302,6 +308,8 @@ public class ContainerStatusUpdater implements Runnable {
                 return checkForDockerSwarmServiceUpdatesAndThrowEvents(server);
             case DOCKER:
                 return checkForDockerContainerUpdatesAndThrowEvents(server);
+            case SLURM:
+                return checkForSlurmJobUpdatesAndThrowEvents(server);
             case KUBERNETES:
                 try {
                     // Make sure the informer is running. It will handle throwing events on its own.
@@ -432,6 +440,19 @@ public class ContainerStatusUpdater implements Runnable {
         }
 
         return report.finish();
+    }
+
+    @Nonnull
+    private UpdateReport checkForSlurmJobUpdatesAndThrowEvents(final DockerServer server) {
+        try {
+            final UpdateReport report = UpdateReport.create();
+            for (final SlurmJobPoller.Outcome outcome : slurmJobPoller.poll(server, leader::isLeader)) {
+                report.add(outcome.successful ? UpdateReportEntry.success(outcome.id) : UpdateReportEntry.failure(outcome.id, outcome.message));
+            }
+            return report.finish();
+        } catch (ContainerBackendException e) {
+            return UpdateReport.singleton(UpdateReportEntry.failure(null, e.getMessage()));
+        }
     }
 
     private static class UpdateReport {

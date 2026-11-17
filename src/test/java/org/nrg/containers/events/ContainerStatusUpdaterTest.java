@@ -47,6 +47,7 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
@@ -79,6 +80,7 @@ class ContainerStatusUpdaterTest {
     private DockerServerService dockerServerService;
     private DockerServer server;
     private KubernetesClientFactory kubernetesClientFactory;
+    private SlurmJobPoller slurmJobPoller;
     private KubernetesClient kubernetesClient;
     private NodeLeader leader;
     private NodeLeaderListener listener;
@@ -110,6 +112,7 @@ class ContainerStatusUpdaterTest {
 
         kubernetesClient = mock(KubernetesClient.class);
         kubernetesClientFactory = mock(KubernetesClientFactory.class);
+        slurmJobPoller = mock(SlurmJobPoller.class);
         when(kubernetesClientFactory.getKubernetesClient()).thenReturn(kubernetesClient);
 
         leader = mock(NodeLeader.class);
@@ -120,7 +123,7 @@ class ContainerStatusUpdaterTest {
         when(nodeLockService.registerLeader(eq(ContainerStatusUpdater.LEADER_LOCK), any())).thenReturn(leader);
 
         updater = new ContainerStatusUpdater(containerControlApi, containerService, dockerServerService,
-                eventService, kubernetesClientFactory, mock(JmsTemplate.class), nodeLockService);
+                eventService, kubernetesClientFactory, mock(JmsTemplate.class), nodeLockService, slurmJobPoller);
 
         final ArgumentCaptor<NodeLeaderListener> captor = ArgumentCaptor.forClass(NodeLeaderListener.class);
         verify(nodeLockService).registerLeader(eq(ContainerStatusUpdater.LEADER_LOCK), captor.capture());
@@ -178,6 +181,33 @@ class ContainerStatusUpdaterTest {
         when(leader.isLeader()).thenReturn(true);
         updater.run();
         verify(dockerServerService).update(any());
+    }
+
+    @Test
+    void slurmTicksDelegateToThePollerWithTheLeaderCheck() throws Exception {
+        when(server.backend()).thenReturn(Backend.SLURM);
+        final ArgumentCaptor<java.util.function.BooleanSupplier> stillLeader = ArgumentCaptor.forClass(java.util.function.BooleanSupplier.class);
+        when(slurmJobPoller.poll(eq(server), stillLeader.capture())).thenReturn(Collections.emptyList());
+
+        updater.run();
+
+        verify(slurmJobPoller).poll(eq(server), any());
+        when(leader.isLeader()).thenReturn(false);
+        assertFalse(stillLeader.getValue().getAsBoolean(), "the poller must see a demotion during its walk");
+    }
+
+    @Test
+    void slurmPollFailureIsReportedNotThrown() throws Exception {
+        when(server.backend()).thenReturn(Backend.SLURM);
+        when(slurmJobPoller.poll(eq(server), any())).thenThrow(new org.nrg.containers.exceptions.ContainerBackendException("unreachable"));
+        updater.run();
+        verify(slurmJobPoller).poll(eq(server), any());
+    }
+
+    @Test
+    void electionResetsTheSlurmPoller() {
+        listener.onElected(ContainerStatusUpdater.LEADER_LOCK);
+        verify(slurmJobPoller).reset();
     }
 
     @Test

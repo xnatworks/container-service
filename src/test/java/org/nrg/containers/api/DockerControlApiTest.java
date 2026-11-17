@@ -99,6 +99,7 @@ public class DockerControlApiTest {
 
     private KubernetesClientFactory kubernetesClientFactory = Mockito.mock(KubernetesClientFactory.class);
     private KubernetesClient kubernetesClient = Mockito.mock(KubernetesClient.class);
+    private org.nrg.containers.api.slurm.SlurmBackend slurmBackend = Mockito.mock(org.nrg.containers.api.slurm.SlurmBackend.class);
 
     private com.github.dockerjava.api.DockerClient mockDockerJavaClient = Mockito.mock(com.github.dockerjava.api.DockerClient.class, Answers.RETURNS_MOCKS);
     private DockerImage mockDockerImage = Mockito.mock(DockerImage.class);
@@ -117,7 +118,7 @@ public class DockerControlApiTest {
         // The fact that we have to do this is a code smell!
         // Should probably inject this client instance into DockerControlApi as a bean.
         dockerControlApi = Mockito.spy(new DockerControlApi(
-                dockerServerService, dockerHubService, kubernetesClientFactory
+                dockerServerService, dockerHubService, kubernetesClientFactory, slurmBackend
         ));
         // Never reach a real registry
         Mockito.doReturn(mockDockerImage).when(dockerControlApi).pullImage(anyString());
@@ -146,6 +147,10 @@ public class DockerControlApiTest {
                 when(container.containerId()).thenReturn(BACKEND_ID);
                 when(container.serviceId()).thenThrow(new RuntimeException("Should not be called"));
                 break;
+            case SLURM:
+                when(container.containerId()).thenThrow(new RuntimeException("Should not be called"));
+                when(container.serviceId()).thenReturn(BACKEND_ID);
+                break;
         }
         swarmMode = backend == Backend.SWARM;  // backwards compatibility
 
@@ -171,6 +176,9 @@ public class DockerControlApiTest {
             case KUBERNETES:
                 when(kubernetesClient.ping()).thenReturn(ok);
                 break;
+            case SLURM:
+                when(slurmBackend.ping(dockerServer)).thenReturn(ok);
+                break;
         }
 
         // Run the test
@@ -193,6 +201,8 @@ public class DockerControlApiTest {
             when(kubernetesClient.getLog(
                     BACKEND_ID, logType, null, null
             )).thenReturn(logContents);
+        } else if (backend == Backend.SLURM) {
+            when(slurmBackend.getLog(container, logType, dockerServer)).thenReturn(logContents);
         } else {
             setUpForContainerLogTest(logContents);
         }
@@ -214,6 +224,8 @@ public class DockerControlApiTest {
             setUpForSwarmLogTest(logContents);
         } else if (backend == Backend.DOCKER) {
             setUpForContainerLogTest(logContents);
+        } else if (backend == Backend.SLURM) {
+            when(slurmBackend.getLog(container, logType, dockerServer)).thenReturn(logContents);
         } else {
             // No need to mock anything for Kubernetes
         }
@@ -287,6 +299,9 @@ public class DockerControlApiTest {
             when(kubernetesClient.createJob(
                     eq(toLaunch), eq(DockerControlApi.NumReplicas.ZERO), any(), any(), any()
             )).thenReturn(BACKEND_ID);
+        } else if (backend == Backend.SLURM) {
+            toLaunchAndExpectedContainerBuilder.serviceId(BACKEND_ID).taskId(BACKEND_ID);
+            when(slurmBackend.create(toLaunch, dockerServer)).thenReturn(BACKEND_ID);
         } else {
             toLaunchAndExpectedContainerBuilder.containerId(BACKEND_ID);
 
@@ -347,6 +362,9 @@ public class DockerControlApiTest {
             )).thenReturn(BACKEND_ID);
 
             expectedCreatedBuilder.serviceId(BACKEND_ID);
+        } else if (backend == Backend.SLURM) {
+            when(slurmBackend.create(any(Container.class), eq(dockerServer))).thenReturn(BACKEND_ID);
+            expectedCreatedBuilder.serviceId(BACKEND_ID).taskId(BACKEND_ID);
         } else {
             final CreateContainerResponse resp = new CreateContainerResponse();
             resp.setId(BACKEND_ID);
@@ -452,6 +470,10 @@ public class DockerControlApiTest {
             case KUBERNETES:
                 testStart_kubernetes();
                 break;
+            case SLURM:
+                dockerControlApi.start(container);
+                verify(slurmBackend).start(container, dockerServer);
+                break;
         }
     }
 
@@ -530,6 +552,9 @@ public class DockerControlApiTest {
             case KUBERNETES:
                 verify(kubernetesClient).removeJob(BACKEND_ID);
                 break;
+            case SLURM:
+                verify(slurmBackend).kill(container, dockerServer);
+                break;
         }
     }
 
@@ -546,6 +571,7 @@ public class DockerControlApiTest {
         verify(mockDockerJavaClient, times(0)).removeServiceCmd(BACKEND_ID);
         verify(mockDockerJavaClient, times(0)).removeContainerCmd(BACKEND_ID);
         verify(kubernetesClient, times(0)).removeJob(BACKEND_ID);
+        verify(slurmBackend, times(0)).remove(any(), any());
     }
 
     @Test
@@ -567,6 +593,9 @@ public class DockerControlApiTest {
             case KUBERNETES:
                 verify(kubernetesClient).removeJob(BACKEND_ID);
                 break;
+            case SLURM:
+                verify(slurmBackend).remove(container, dockerServer);
+                break;
         }
     }
 
@@ -585,6 +614,9 @@ public class DockerControlApiTest {
                 break;
             case KUBERNETES:
                 verify(kubernetesClient).removeJob(BACKEND_ID);
+                break;
+            case SLURM:
+                verify(slurmBackend).remove(container, dockerServer);
                 break;
         }
     }

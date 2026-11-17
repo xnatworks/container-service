@@ -36,7 +36,8 @@ public class EventPullingIntegrationTestConfig implements SchedulingConfigurer {
                                                          final JmsTemplate template,
                                                          final NodeLockService nodeLockService) {
         return new ContainerStatusUpdater(
-                containerControlApi, containerService, dockerServerService, eventService, kubernetesClientFactory, template, nodeLockService
+                containerControlApi, containerService, dockerServerService, eventService, kubernetesClientFactory, template, nodeLockService,
+                org.mockito.Mockito.mock(org.nrg.containers.events.SlurmJobPoller.class)
         );
     }
 

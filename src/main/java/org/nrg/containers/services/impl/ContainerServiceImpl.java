@@ -19,6 +19,7 @@ import org.apache.commons.lang3.tuple.Pair;
 import org.nrg.action.ClientException;
 import org.nrg.containers.api.ContainerControlApi;
 import org.nrg.containers.api.LogType;
+import org.nrg.containers.api.LogChunk;
 import org.nrg.containers.events.model.ContainerEvent;
 import org.nrg.containers.events.model.KubernetesStatusChangeEvent;
 import org.nrg.containers.events.model.ServiceTaskEvent;
@@ -118,6 +119,7 @@ import java.io.OutputStream;
 import java.nio.charset.Charset;
 import java.nio.file.Paths;
 import java.text.ParseException;
+import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
@@ -1713,6 +1715,10 @@ public class ContainerServiceImpl implements ContainerService {
             return ContainerLogPollResponse.fromComplete("");
         }
 
+        if (container.backend() == Backend.SLURM) {
+            return getSlurmLog(container, logType, since);
+        }
+
         String logContent = null;
         try {
             // If log path is blank, that means we have not yet saved the logs from docker. Go fetch them now.
@@ -1749,6 +1755,24 @@ public class ContainerServiceImpl implements ContainerService {
         logContent = dateTimeMatch.reset().replaceAll("");
 
         return ContainerLogPollResponse.fromLive(logContent, lastLogTimestamp);
+    }
+
+    /**
+     * Slurm logs are plain files without per-line timestamps, so live polling continues from a byte offset instead.
+     * The poll API carries its position as a timestamp, so the offset travels as one: seconds since the epoch. Only
+     * this method reads it back; the UI passes it through unchanged.
+     */
+    private ContainerLogPollResponse getSlurmLog(final Container container, final LogType logType, @Nullable final OffsetDateTime since) {
+        final long offset = since == null ? 0L : Math.max(0L, since.toEpochSecond());
+        LogChunk chunk;
+        try {
+            chunk = containerControlApi.getLogFrom(container, logType, offset);
+        } catch (NoContainerServerException | ContainerBackendException e) {
+            log.debug("Could not read the {} log of Slurm container {}: {}", logType, container.databaseId(), e.getMessage());
+            chunk = LogChunk.create("", offset);
+        }
+        return ContainerLogPollResponse.fromLive(chunk.content(),
+                formatTimestamp(OffsetDateTime.ofInstant(Instant.ofEpochSecond(chunk.nextOffset()), UTC)));
     }
 
     private static OffsetDateTime sinceOrDefault(final OffsetDateTime since, final OffsetDateTime queryTime) {

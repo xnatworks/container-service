@@ -174,8 +174,62 @@ XNAT.plugin.containerService.assignProjectlauncher = assignProjectlauncher = get
         { label: 'Select Backend Type', value: '' },
         { label: 'Docker', value: 'docker' },
         { label: 'Docker Swarm', value: 'swarm' },
-        { label: 'Kubernetes', value: 'kubernetes' }
+        { label: 'Kubernetes', value: 'kubernetes' },
+        { label: 'Slurm', value: 'slurm' }
     ];
+
+    // Backends whose images XNAT can't list or pull: Kubernetes nodes and Slurm compute nodes fetch their own.
+    function managesImages(backend) {
+        return !backend || ['kubernetes', 'slurm'].indexOf(backend.toLowerCase()) < 0;
+    }
+
+    const TOKEN_WARNING_DAYS = 7;
+
+    // Fills the "slurm:<property>" inputs from the server's Slurm settings, or with the defaults for a new server.
+    // The token input stays empty: the server never sends the token.
+    function setSlurmValues($form, slurm) {
+        slurm = slurm || {};
+        $form.find(':input[name^="slurm:"]').each(function() {
+            const $input = $(this);
+            const value = slurm[this.name.substring('slurm:'.length)];
+            if (this.type === 'password') {
+                $input.val('');
+            } else if (this.type === 'checkbox') {
+                // form2js otherwise reads a switchbox's true|false values from its title, "<name>: true|false",
+                // and throws on a name that itself contains the ':' delimiter.
+                this.setAttribute('data-values', 'true|false');
+                // With those values the checked state alone decides what is sent, so the value stays 'true'.
+                this.value = 'true';
+                this.checked = value !== false; // allow-docker-pull defaults to on
+            } else if (this.tagName === 'SELECT') {
+                $input.val(value || this.options[0].value);
+            } else {
+                $input.val(value === null || value === undefined ? '' : String(value));
+            }
+        });
+    }
+
+    // The Slurm token is never sent to the browser; the server reports whether one is stored and when it expires.
+    function slurmTokenStatus(slurm) {
+        if (!slurm || !slurm['token-set']) {
+            return { level: 'none', text: 'No token is stored. Enter the JWT for the Slurm user.' };
+        }
+        const expiresAt = slurm['token-expires-at'] ? new Date(slurm['token-expires-at']) : null;
+        if (!expiresAt || isNaN(expiresAt.getTime())) {
+            return { level: 'ok', text: 'A token is stored. Leave this blank to keep it.' };
+        }
+        const when = expiresAt.toLocaleString();
+        const msLeft = expiresAt.getTime() - Date.now();
+        if (msLeft <= 0) {
+            return { level: 'expired', text: 'The stored token expired on ' + when + '. Jobs cannot be submitted until you enter a new one.' };
+        }
+        const days = Math.floor(msLeft / 86400000);
+        if (days < TOKEN_WARNING_DAYS) {
+            const left = days < 1 ? 'less than a day' : days + (days === 1 ? ' day' : ' days');
+            return { level: 'expiring', text: 'The stored token expires on ' + when + ' (' + left + '). Enter a new one before then, or leave this blank to keep it.' };
+        }
+        return { level: 'ok', text: 'A token is stored. It expires on ' + when + '. Leave this blank to keep it.' };
+    }
 
     let pvcMountType = [
         { label: 'No PVC Mount', value: ''},
@@ -244,7 +298,91 @@ XNAT.plugin.containerService.assignProjectlauncher = assignProjectlauncher = get
                             }).element
                         ]),
 
-                        spawn('div.host-type-settings.docker.swarm.kubernetes', [
+                        spawn('div.host-type-settings.slurm', [
+                            spawn('p.divider', '<strong>Slurm Connection</strong><br> XNAT submits every job through slurmrestd as one cluster account, ' +
+                                'authenticated with a JWT. Create a long-lived token on the cluster, e.g. ' +
+                                '<code>scontrol token username=xnat lifespan=7776000</code> (90 days); the default lifespan is 30 minutes.'),
+                            XNAT.ui.panel.input.text({
+                                name: 'slurm:rest-url',
+                                label: 'slurmrestd URL',
+                                className: 'slurm-rest-url',
+                                description: 'e.g. "https://slurm.example.org:6820"'
+                            }),
+                            XNAT.ui.panel.input.text({
+                                name: 'slurm:user',
+                                label: 'Slurm User',
+                                className: 'slurm-user',
+                                description: 'Cluster account that submits and owns the jobs. It needs write access to the XNAT build directory, as the compute nodes see it.'
+                            }),
+                            XNAT.ui.panel.input.password({
+                                name: 'slurm:token',
+                                label: 'Token',
+                                className: 'slurm-token',
+                                description: '<span class="slurm-token-status"></span>'
+                            }),
+                            XNAT.ui.panel.input.text({
+                                name: 'slurm:api-version',
+                                label: 'REST API Version',
+                                description: 'Leave blank to use the newest version the server offers, or enter one such as "v0.0.40" (the oldest supported).'
+                            })
+                        ]),
+
+                        spawn('div.host-type-settings.slurm', [
+                            spawn('p.divider', '<strong>Job Settings</strong><br> Applied to every job. Leave a field blank to use the cluster\'s default.'),
+                            XNAT.ui.panel.input.text({
+                                name: 'slurm:partition',
+                                label: 'Partition'
+                            }),
+                            XNAT.ui.panel.input.text({
+                                name: 'slurm:account',
+                                label: 'Account'
+                            }),
+                            XNAT.ui.panel.input.text({
+                                name: 'slurm:qos',
+                                label: 'QOS'
+                            }),
+                            XNAT.ui.panel.input.text({
+                                name: 'slurm:time-limit',
+                                label: 'Time Limit',
+                                description: 'Any format sbatch accepts, e.g. "90" (minutes), "4:00:00" or "1-12" (days-hours).'
+                            })
+                        ]),
+
+                        spawn('div.host-type-settings.slurm', [
+                            spawn('p.divider', '<strong>Container Images</strong><br> Jobs run each command\'s image with Apptainer or Singularity on the compute nodes. ' +
+                                'A prebuilt SIF file in the SIF directory is used when there is one; otherwise the image is pulled from its registry. ' +
+                                'Enter paths as the compute nodes see them.'),
+                            XNAT.ui.panel.select.single({
+                                name: 'slurm:runtime',
+                                label: 'Container Runtime',
+                                options: [
+                                    { label: 'Apptainer', value: 'apptainer' },
+                                    { label: 'Singularity', value: 'singularity' }
+                                ],
+                                description: 'Requires Apptainer 1.1 or SingularityCE 3.10 or later.'
+                            }),
+                            XNAT.ui.panel.input.text({
+                                name: 'slurm:sif-directory',
+                                label: 'SIF Directory',
+                                className: 'slurm-sif-directory',
+                                description: 'Shared directory of prebuilt images, e.g. "/shared/xnat/sif".'
+                            }),
+                            XNAT.ui.panel.input.switchbox({
+                                name: 'slurm:allow-docker-pull',
+                                label: 'Pull images from registries?',
+                                onText: 'ON',
+                                offText: 'OFF',
+                                value: 'true',
+                                description: 'Turn this off if the compute nodes can\'t reach image registries. A SIF directory is then required.'
+                            }),
+                            XNAT.ui.panel.input.text({
+                                name: 'slurm:pull-cache-directory',
+                                label: 'Pull Cache Directory',
+                                description: 'Shared Apptainer cache for pulled images, so each image is converted once rather than for every job.'
+                            })
+                        ]),
+
+                        spawn('div.host-type-settings.docker.swarm.kubernetes.slurm', [
                             spawn('p.divider', '<strong>Path Translation (Optional)</strong><br> Use these settings to resolve differences between your XNAT archive mount point and the Server mount point for your XNAT data.'),
                             XNAT.ui.panel.input.text({
                                 name: 'path-translation-xnat-prefix',
@@ -330,7 +468,7 @@ XNAT.plugin.containerService.assignProjectlauncher = assignProjectlauncher = get
                             })
                         ]),
 
-                        spawn('div.host-type-settings.docker.swarm.kubernetes', [
+                        spawn('div.host-type-settings.docker.swarm.kubernetes.slurm', [
                             spawn('p.divider', '<strong>Automatically clean up completed containers</strong><br> Use this setting to automatically remove completed containers after saving outputs and logs. If you do not use this setting, you will need to run some sort of cleanup script on your server to remove old containers so as not to run out of system resources.'),
                             XNAT.ui.panel.input.switchbox({
                                 name: 'auto-cleanup',
@@ -351,7 +489,7 @@ XNAT.plugin.containerService.assignProjectlauncher = assignProjectlauncher = get
                             }),
                         ]),
 
-                        spawn('div.host-type-settings.docker.swarm.kubernetes', [
+                        spawn('div.host-type-settings.docker.swarm.kubernetes.slurm', [
                             spawn('p.divider', '<strong>Automatically clean up finalized container build space</strong><br> ' +
                                 'Containers with writable inputs or outputs create temporary directories in the XNAT build folder. ' +
                                 'Enable this to have a daily scheduled job delete those directories once the container has finalized ' +
@@ -397,7 +535,7 @@ XNAT.plugin.containerService.assignProjectlauncher = assignProjectlauncher = get
                             })
                         ]),
 
-                        spawn('div.host-type-settings.docker.swarm.kubernetes', [
+                        spawn('div.host-type-settings.docker.swarm.kubernetes.slurm', [
                             spawn('p.divider', '<strong>Container status emails</strong><br> Should the launching-user receive an email when container is complete or failed?'),
                             XNAT.ui.panel.input.switchbox({
                                 name: 'status-email-enabled',
@@ -494,7 +632,11 @@ XNAT.plugin.containerService.assignProjectlauncher = assignProjectlauncher = get
                             containerHostManager.addKubernetesToleration();
                         }
                     }
-                    $formContainer.find('form').setValues(item);
+                    // The Slurm fields are filled by setSlurmValues() below: setValues() writes "[object Object]"
+                    // into a nested field the server didn't send, such as the token.
+                    const withoutSlurm = Object.assign({}, item);
+                    delete withoutSlurm.slurm;
+                    $formContainer.find('form').setValues(withoutSlurm);
                     // Set toleration values that setValues may not handle
                     if (item['kubernetes-tolerations']) {
                         for (var i = 0; i < item['kubernetes-tolerations'].length; i++) {
@@ -513,6 +655,12 @@ XNAT.plugin.containerService.assignProjectlauncher = assignProjectlauncher = get
                         }
                     }
                 }
+
+                setSlurmValues($formContainer.find('form'), item.slurm);
+                const tokenStatus = slurmTokenStatus(item.slurm);
+                $formContainer.find('.slurm-token-status')
+                    .text(tokenStatus.text)
+                    .css('color', tokenStatus.level === 'expiring' || tokenStatus.level === 'expired' ? '#c00' : '');
 
                 containerHostManager.displaySettings(item.backend || false);
                 if (item['archive-pvc-name']) {
@@ -569,6 +717,37 @@ XNAT.plugin.containerService.assignProjectlauncher = assignProjectlauncher = get
                                 if (tolOp !== 'Exists' && (!tolKey || !tolKey.trim())) {
                                     errors.push('Toleration key is required unless operator is "Exists"');
                                 }
+                            }
+                        }
+
+                        if (hostType === 'slurm') {
+                            const $restUrl = $form.find('input.slurm-rest-url');
+                            const $user = $form.find('input.slurm-user');
+                            const $token = $form.find('input.slurm-token');
+                            const restUrl = $restUrl.val().trim();
+                            if (!/^https?:\/\/[^\/\s]+/i.test(restUrl)) {
+                                errors.push('Enter the slurmrestd URL, starting with http:// or https://');
+                                $restUrl.addClass('invalid');
+                            }
+                            if (!$user.val().trim()) {
+                                errors.push('Enter the Slurm user that submits jobs');
+                                $user.addClass('invalid');
+                            }
+                            if (!$token.val().trim()) {
+                                const stored = item.slurm || {};
+                                if (!stored['token-set'] || item.backend !== 'slurm') {
+                                    errors.push('Enter the Slurm token');
+                                    $token.addClass('invalid');
+                                } else if ((stored['rest-url'] || '') !== restUrl) {
+                                    // The server keeps a stored token only while the URL is unchanged.
+                                    errors.push('Enter the Slurm token again: the stored token is not sent to a new slurmrestd URL');
+                                    $token.addClass('invalid');
+                                }
+                            }
+                            const $sifDirectory = $form.find('input.slurm-sif-directory');
+                            if (!$form.find('input[name="slurm:allow-docker-pull"]').is(':checked') && !$sifDirectory.val().trim()) {
+                                errors.push('Enter a SIF directory, or allow pulling images from registries');
+                                $sifDirectory.addClass('invalid');
                             }
                         }
 
@@ -917,14 +1096,23 @@ XNAT.plugin.containerService.assignProjectlauncher = assignProjectlauncher = get
             }, 'Edit');
         }
 
-        function hostPingStatus(ping) {
+        function hostPingStatus(item) {
+            var ping = item.ping;
             var status = {};
             if (ping !== undefined) {
                 status = (ping) ? { label: 'OK', message: 'Ping Status: OK'} :  { label: 'Down', message: 'Ping Status: FALSE' };
             } else {
                 status = { label: 'Error', message: 'No response to ping' };
             }
-            return spawn('span', { title: status.message }, status.label);
+            var parts = [ spawn('span', { title: status.message }, status.label) ];
+            if (item.backend === 'slurm') {
+                var token = slurmTokenStatus(item.slurm);
+                if (token.level !== 'ok') {
+                    var label = token.level === 'expired' ? 'Token expired' : token.level === 'none' ? 'No token' : 'Token expires soon';
+                    parts.push(spawn('div.slurm-token-warning', { style: { color: '#c00', fontSize: '11px' }, title: token.text }, label));
+                }
+            }
+            return spawn('!', parts);
         }
 
         containerHostManager.getAll().done(function(data){
@@ -935,7 +1123,7 @@ XNAT.plugin.containerService.assignProjectlauncher = assignProjectlauncher = get
             } else {
                 containerHostManager.hostType = data.backend;
             }
-            if (containerHostManager.hostType.toLowerCase() === 'kubernetes') {
+            if (!managesImages(containerHostManager.hostType)) {
                 // catch the race condition, if the Image List manager table has already rendered
                 $(document).find('button.new-image').addClass('hidden');
             } else {
@@ -948,7 +1136,7 @@ XNAT.plugin.containerService.assignProjectlauncher = assignProjectlauncher = get
                     // .td([ spawn('div.center', [item.host]) ]).addClass('hostPath')
                     .td([ spawn('div.center', [defaultToggle(item)]) ])
                     .td([ spawn('div.center', [ backends.filter((backend) => { return backend.value === item.backend } )[0].label ]) ])
-                    .td([ spawn('div.center', [hostPingStatus(item.ping)]) ])
+                    .td([ spawn('div.center', [hostPingStatus(item)]) ])
                     .td([ spawn('div.center', [editButton(item)]) ])
             });
 
@@ -1922,7 +2110,7 @@ XNAT.plugin.containerService.assignProjectlauncher = assignProjectlauncher = get
         var $header = $('#image-filter-bar').parents('.panel').find('.panel-heading');
         var $footer = $('#image-filter-bar').parents('.panel').find('.panel-footer');
 
-        // add two 'add new' buttons to the panel header. The 'add new image' button is hidden in a Kubernetes environment
+        // add two 'add new' buttons to the panel header. The 'add new image' button is hidden when XNAT doesn't manage images
         const newImage = spawn('button.new-image.btn.btn-sm.pad5', {
             html: 'New Image',
             onclick: function(){
@@ -1937,7 +2125,7 @@ XNAT.plugin.containerService.assignProjectlauncher = assignProjectlauncher = get
         });
 
         let buttonSet = [ newImage, spacer(6), newCommand ];
-        if (hostType !== undefined && hostType === 'kubernetes') buttonSet = [ newCommand ];
+        if (hostType !== undefined && !managesImages(hostType)) buttonSet = [ newCommand ];
 
         $header.empty().append(spawn('!',[
             spawn('h3.panel-title', [

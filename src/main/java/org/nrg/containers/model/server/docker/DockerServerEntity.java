@@ -35,6 +35,18 @@ public class DockerServerEntity extends AbstractHibernateEntity {
     private String archivePathTranslation;
     private String buildPathTranslation;
     private String combinedPathTranslation;
+    private String slurmRestUrl;
+    private String slurmApiVersion;
+    private String slurmUser;
+    private String slurmToken;
+    private String slurmPartition;
+    private String slurmAccount;
+    private String slurmQos;
+    private String slurmTimeLimit;
+    private String slurmRuntime;
+    private String slurmSifDirectory;
+    private Boolean slurmAllowDockerPull;
+    private String slurmPullCacheDirectory;
 
     public static DockerServerEntity create(final DockerServer dockerServer) {
         return new DockerServerEntity().update(dockerServer);
@@ -65,6 +77,7 @@ public class DockerServerEntity extends AbstractHibernateEntity {
         this.archivePathTranslation = dockerServer.archivePathTranslation();
         this.buildPathTranslation = dockerServer.buildPathTranslation();
         this.combinedPathTranslation = dockerServer.combinedPathTranslation();
+        updateSlurm(dockerServer.slurm());
 
         final Map<String, DockerServerBase.DockerServerSwarmConstraint> pojoConstraintsToAdd = new HashMap<>();
         List<DockerServerBase.DockerServerSwarmConstraint> pojoConstraints = dockerServer.swarmConstraints();
@@ -384,6 +397,90 @@ public class DockerServerEntity extends AbstractHibernateEntity {
 
     public void setCombinedPathTranslation(String combinedPathTranslation) { this.combinedPathTranslation = combinedPathTranslation; }
 
+    /**
+     * Copies Slurm settings from a POJO. Keeping the stored token when a save omits it is handled before validation,
+     * in DockerServerServiceImpl, so by this point the POJO carries the token to store.
+     */
+    private void updateSlurm(final SlurmSettings slurm) {
+        if (slurm == null) {
+            this.slurmRestUrl = null;
+            this.slurmApiVersion = null;
+            this.slurmUser = null;
+            this.slurmToken = null;
+            this.slurmPartition = null;
+            this.slurmAccount = null;
+            this.slurmQos = null;
+            this.slurmTimeLimit = null;
+            this.slurmRuntime = null;
+            this.slurmSifDirectory = null;
+            this.slurmAllowDockerPull = null;
+            this.slurmPullCacheDirectory = null;
+            return;
+        }
+        this.slurmRestUrl = slurm.restUrl();
+        this.slurmApiVersion = slurm.apiVersion();
+        this.slurmUser = slurm.user();
+        this.slurmPartition = slurm.partition();
+        this.slurmAccount = slurm.account();
+        this.slurmQos = slurm.qos();
+        this.slurmTimeLimit = slurm.timeLimit();
+        this.slurmRuntime = slurm.runtime();
+        this.slurmSifDirectory = slurm.sifDirectory();
+        this.slurmAllowDockerPull = slurm.allowDockerPull();
+        this.slurmPullCacheDirectory = slurm.pullCacheDirectory();
+        this.slurmToken = slurm.token();
+    }
+
+    public String getSlurmRestUrl() { return slurmRestUrl; }
+
+    public void setSlurmRestUrl(String slurmRestUrl) { this.slurmRestUrl = slurmRestUrl; }
+
+    public String getSlurmApiVersion() { return slurmApiVersion; }
+
+    public void setSlurmApiVersion(String slurmApiVersion) { this.slurmApiVersion = slurmApiVersion; }
+
+    @Column(name = "slurm_user")
+    public String getSlurmUser() { return slurmUser; }
+
+    public void setSlurmUser(String slurmUser) { this.slurmUser = slurmUser; }
+
+    @Column(columnDefinition = "text")
+    public String getSlurmToken() { return slurmToken; }
+
+    public void setSlurmToken(String slurmToken) { this.slurmToken = slurmToken; }
+
+    public String getSlurmPartition() { return slurmPartition; }
+
+    public void setSlurmPartition(String slurmPartition) { this.slurmPartition = slurmPartition; }
+
+    public String getSlurmAccount() { return slurmAccount; }
+
+    public void setSlurmAccount(String slurmAccount) { this.slurmAccount = slurmAccount; }
+
+    public String getSlurmQos() { return slurmQos; }
+
+    public void setSlurmQos(String slurmQos) { this.slurmQos = slurmQos; }
+
+    public String getSlurmTimeLimit() { return slurmTimeLimit; }
+
+    public void setSlurmTimeLimit(String slurmTimeLimit) { this.slurmTimeLimit = slurmTimeLimit; }
+
+    public String getSlurmRuntime() { return slurmRuntime; }
+
+    public void setSlurmRuntime(String slurmRuntime) { this.slurmRuntime = slurmRuntime; }
+
+    public String getSlurmSifDirectory() { return slurmSifDirectory; }
+
+    public void setSlurmSifDirectory(String slurmSifDirectory) { this.slurmSifDirectory = slurmSifDirectory; }
+
+    public Boolean getSlurmAllowDockerPull() { return slurmAllowDockerPull; }
+
+    public void setSlurmAllowDockerPull(Boolean slurmAllowDockerPull) { this.slurmAllowDockerPull = slurmAllowDockerPull; }
+
+    public String getSlurmPullCacheDirectory() { return slurmPullCacheDirectory; }
+
+    public void setSlurmPullCacheDirectory(String slurmPullCacheDirectory) { this.slurmPullCacheDirectory = slurmPullCacheDirectory; }
+
     @Override
     public boolean equals(final Object o) {
         if (this == o) return true;
@@ -461,6 +558,18 @@ public class DockerServerEntity extends AbstractHibernateEntity {
                 Objects.equals(this.buildDirRetainDaysFailed, that.buildDirRetainDaysFailed) &&
                 Objects.equals(this.buildDirRetainDaysKilled, that.buildDirRetainDaysKilled) &&
                 Objects.equals(this.buildDirCleanupTime, that.buildDirCleanupTime) &&
+                Objects.equals(this.slurmRestUrl, that.slurmRestUrl) &&
+                Objects.equals(this.slurmApiVersion, that.slurmApiVersion) &&
+                Objects.equals(this.slurmUser, that.slurmUser) &&
+                Objects.equals(this.slurmToken, that.slurmToken) &&
+                Objects.equals(this.slurmPartition, that.slurmPartition) &&
+                Objects.equals(this.slurmAccount, that.slurmAccount) &&
+                Objects.equals(this.slurmQos, that.slurmQos) &&
+                Objects.equals(this.slurmTimeLimit, that.slurmTimeLimit) &&
+                Objects.equals(this.slurmRuntime, that.slurmRuntime) &&
+                Objects.equals(this.slurmSifDirectory, that.slurmSifDirectory) &&
+                Objects.equals(this.slurmAllowDockerPull, that.slurmAllowDockerPull) &&
+                Objects.equals(this.slurmPullCacheDirectory, that.slurmPullCacheDirectory) &&
                 constrEqual &&
                 tolEqual;
     }
@@ -472,7 +581,8 @@ public class DockerServerEntity extends AbstractHibernateEntity {
                 maxConcurrentFinalizingJobs, statusEmailEnabled, gpuVendor, archivePvcName, buildPvcName, combinedPvcName,
                 archivePathTranslation, buildPathTranslation, combinedPathTranslation, kubernetesTolerations,
                 buildDirCleanupEnabled, buildDirRetainDaysCompleted, buildDirRetainDaysFailed,
-                buildDirRetainDaysKilled, buildDirCleanupTime);
+                buildDirRetainDaysKilled, buildDirCleanupTime,
+                slurmRestUrl, slurmApiVersion, slurmUser, slurmToken, slurmPartition, slurmAccount, slurmQos, slurmTimeLimit, slurmRuntime, slurmSifDirectory, slurmAllowDockerPull, slurmPullCacheDirectory);
     }
 
 }

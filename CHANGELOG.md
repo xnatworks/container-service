@@ -7,9 +7,15 @@
 
 ### Features
 * [#15](https://github.com/NrgXnat/container-service/pull/15): The container status updater, which notices finished containers and finalizes them, now runs on whichever node holds the `containers:status-updater` leader lock instead of only on the node flagged with `xnat.is_primary_node`. On a multi-node install another node takes over when that node shuts down, crashes or loses its database connection, so containers keep being finalized while the primary node is down. A leader that can't reach the container backend for about 3 minutes hands the lock to another node. Single-node installs behave as before.
-    * Multi-node installs need a backend every node can reach: Kubernetes, Docker Swarm, or Docker over `tcp://`.
+    * Multi-node installs need a backend every node can reach: Kubernetes, Docker Swarm, Docker over `tcp://`, or Slurm.
     * Upgrade the primary node first. A non-primary node that restarts on this release while the primary still runs an older one takes the lock alongside it, and containers that finish in that window can be finalized twice.
     * `containers.log` records when a node is elected or demoted as the status updater leader.
+* Added a Slurm compute backend. XNAT submits each container as a Slurm batch job through slurmrestd, and the job runs the command's Docker image with Apptainer or Singularity on the compute node. Containers are followed to completion, finalized, killed and cleaned up as on the other backends, and their logs can be watched live from the history page. Configured under Administer > Plugin Settings > Container Service > Compute Backend by choosing the Slurm type. See [Container Service on Slurm: Setup](docs/slurm/container-service-on-slurm-setup.md).
+    * Requires slurmrestd API v0.0.40 or newer (Slurm 23.11+) with JWT authentication, and Apptainer 1.1+ or SingularityCE 3.10+ on the compute nodes. XNAT's archive and build directories must be on a filesystem the compute nodes share, and the cluster account needs write access to the build directory.
+    * Every job runs as one cluster account, with a JWT stored on the container server. The token is never returned by the API or UI, but it is stored unencrypted in the database. XNAT warns when it is within 7 days of expiring, and cannot renew it yet.
+    * Jobs run a prebuilt SIF file from a configured directory when there is one, and otherwise pull the image from its registry. Pulls can be turned off for clusters without registry access.
+    * Partition, account, QOS and time limit apply to every job. Per-command overrides, per-user submission, automatic token renewal and building SIF files from XNAT are planned.
+    * Saving a container server of another type now discards any Slurm settings submitted with it.
 
 ### Bugfixes
 * [#15](https://github.com/NrgXnat/container-service/pull/15): With the `org.nrg.containers.api` logger at DEBUG, the Kubernetes client no longer logs the service account token or request bodies. It used to log every request's `Authorization` header and the full request and response bodies. Those include a job's `XNAT_PASS` and, in pod lists, the environment of every pod in the namespace. It now logs headers only, with `Authorization` redacted.
