@@ -60,7 +60,7 @@ While a container runs, the history page shows its live stdout and stderr, read 
   every Container Service backend. See [Shared filesystem and permissions](#shared-filesystem-and-permissions).
 - The site **build path** set in XNAT's site settings. Job directories live under it.
 - Network access from XNAT to slurmrestd. On a multi-node XNAT, every node needs it: any node can launch or kill a
-  container, and the status updater runs on whichever node holds the leader lock.
+  container, and the status updater runs on the node flagged with `xnat.is_primary_node`.
 
 ## Cluster setup
 

@@ -15,7 +15,7 @@ page covers the code and how to test it.
 | `api.slurm.SlurmJobBuilder` | Turns a `Container` into a `SlurmJobRequest`: the bash job script that selects the image and runs Apptainer, plus resources. Per-command overrides belong here. |
 | `api.slurm.SlurmJobPaths` | The job directory, `<build path>/slurm/<container id>`, as XNAT and the cluster see it. |
 | `api.slurm.SlurmBackend` | Create, start, kill, remove and logs, called from `DockerControlApi` for `Backend.SLURM`. |
-| `events.SlurmJobPoller` | Called by `ContainerStatusUpdater` on the leader. Turns Slurm job states into `ServiceTaskEvent`s, which `ContainerServiceImpl.processEvent` handles as it does for Swarm. |
+| `events.SlurmJobPoller` | Called by `ContainerStatusUpdater` on the primary node. Turns Slurm job states into `ServiceTaskEvent`s, which `ContainerServiceImpl.processEvent` handles as it does for Swarm. |
 
 ## Design notes
 

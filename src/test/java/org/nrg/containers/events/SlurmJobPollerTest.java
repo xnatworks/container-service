@@ -374,7 +374,7 @@ class SlurmJobPollerTest {
     }
 
     @Test
-    void theWalkStopsWhenLeadershipIsLost() throws Exception {
+    void theWalkStopsWhenTheNodeIsNoLongerPrimary() throws Exception {
         changed(job("RUNNING").build());
         poller.poll(server, () -> false);
         verify(containerService, never()).retrieveServiceForPoll(anyLong());

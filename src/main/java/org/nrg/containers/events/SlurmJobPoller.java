@@ -48,7 +48,7 @@ import java.util.function.Supplier;
 /**
  * Polls Slurm for the jobs behind unfinalized containers and turns their states into {@link ServiceTaskEvent}s, the
  * same events Swarm produces, so history, workflow updates and finalizing work unchanged. Called by
- * {@link ContainerStatusUpdater} on the leader only.
+ * {@link ContainerStatusUpdater} on the primary node only.
  * <p>
  * Requests stay proportional to XNAT's jobs, never to the cluster's: each tick asks slurmctld once for jobs changed
  * since its last answer, and looks up individually only jobs it has no state for. Every
@@ -119,7 +119,7 @@ public class SlurmJobPoller {
         }
     }
 
-    /** Forgets everything, e.g. on becoming leader, since another node may have moved the jobs on meanwhile. */
+    /** Forgets everything, so the next poll looks every job up again. */
     public synchronized void reset() {
         trackedClient = null;
         cursor = null;
@@ -130,10 +130,10 @@ public class SlurmJobPoller {
     /**
      * Checks every unfinalized Slurm container once.
      *
-     * @param stillLeader checked before each container, so a demoted node stops sending events
+     * @param stillPrimary checked before each container, so a node that is no longer primary stops sending events
      * @throws ContainerBackendException when slurmrestd cannot be queried at all
      */
-    public synchronized List<Outcome> poll(final DockerServer server, final BooleanSupplier stillLeader) throws ContainerBackendException {
+    public synchronized List<Outcome> poll(final DockerServer server, final BooleanSupplier stillPrimary) throws ContainerBackendException {
         final List<Long> databaseIds = containerService.retrieveNonfinalizedServiceIds();
         if (databaseIds.isEmpty()) {
             known.clear();
@@ -159,8 +159,8 @@ public class SlurmJobPoller {
         final List<Outcome> outcomes = new ArrayList<>();
         final Set<Long> tracked = new HashSet<>();
         for (final Long databaseId : databaseIds) {
-            if (!stillLeader.getAsBoolean()) {
-                log.debug("No longer the {} leader; stopping the Slurm job walk.", ContainerStatusUpdater.LEADER_LOCK);
+            if (!stillPrimary.getAsBoolean()) {
+                log.debug("No longer the primary node; stopping the Slurm job walk.");
                 break;
             }
             try {
